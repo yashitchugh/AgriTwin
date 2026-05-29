@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Environment Variables
+.env
+.env.*
+
+# Database
+*.db
+*.sqlite3
+
+# Cache
+.cache/
+pytest_cache/
+
+# Docker
+*.pid
+
+# Temporary datasets
+datasets/cached/
+datasets/weather/
+datasets/satellite/
+
+# External repositories
+external_repos/
+
+# Large docs/context files if desired
+# knowledge/
+
+# PCSE cache
+*.pkl
+
+# Generated YAML files
+generated_agro/
+
+# Temporary outputs
+outputs/
