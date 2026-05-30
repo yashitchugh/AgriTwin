@@ -180,25 +180,34 @@ def create_weather_provider(
     start_year: int = 2020,
     end_year: int = 2021,
     use_nasa: bool = False,
+    start_date: Optional[dt.date] = None,
+    end_date: Optional[dt.date] = None,
 ) -> WeatherDataProvider:
     """Factory function for weather data providers.
 
     Args:
-        latitude:   Site latitude
-        longitude:  Site longitude
-        elevation:  Site elevation (used only for synthetic provider)
-        start_year: First year of weather data
-        end_year:   Last year of weather data
-        use_nasa:   If True, use NASAPowerWeatherDataProvider (requires internet)
+        latitude:    Site latitude
+        longitude:   Site longitude
+        elevation:   Site elevation (used only for synthetic provider)
+        start_year:  First year of weather data (synthetic mode only)
+        end_year:    Last year of weather data (synthetic mode only)
+        use_nasa:    If True, use WeatherService (NASA POWER with caching)
+        start_date:  Start date for NASA weather fetch (required if use_nasa=True)
+        end_date:    End date for NASA weather fetch (required if use_nasa=True)
 
     Returns:
         WeatherDataProvider instance ready for PCSE Engine
     """
     if use_nasa:
-        # Verified: input/__init__.py line 31 (NOT pcse.db)
-        from pcse.input import NASAPowerWeatherDataProvider
-        logger.info("Fetching weather from NASA POWER for (%.2f, %.2f)", latitude, longitude)
-        return NASAPowerWeatherDataProvider(latitude=latitude, longitude=longitude)
+        # Use our custom WeatherService with bounded dates and JSON caching
+        from backend.app.services.weather_service import WeatherService
+        if start_date is None:
+            start_date = dt.date(start_year, 1, 1)
+        if end_date is None:
+            end_date = dt.date(end_year, 12, 31)
+        svc = WeatherService()
+        logger.info("Using NASA POWER via WeatherService for (%.2f, %.2f)", latitude, longitude)
+        return svc.get_weather_provider(latitude, longitude, start_date, end_date)
     else:
         return SyntheticWeatherProvider(
             latitude=latitude,
@@ -207,3 +216,4 @@ def create_weather_provider(
             start_year=start_year,
             end_year=end_year,
         )
+
