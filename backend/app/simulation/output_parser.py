@@ -24,10 +24,47 @@ logger = logging.getLogger(__name__)
 # Maps PCSE uppercase keys → lowercase output field names.
 # These are the variables defined in Wofost72_WLP_CWB.conf OUTPUT_VARS
 # plus additional useful ones accessible via get_variable().
+#
+# Irrigation diagnostic pair — the two most informative variables for
+# assessing whether irrigation improved crop water status:
+#
+#   SM (Volumetric soil moisture [cm³/cm³]):
+#     Computed daily by WaterbalanceFD. After an irrigation event fires,
+#     SM should rise by approximately (amount × efficiency) / (RD × 10) cm³/cm³.
+#     SM is bounded between SMW (permanent wilting point) and SM0 (saturation).
+#     Watching SM over time reveals how quickly the crop depletes each
+#     irrigation application and when the next one is needed.
+#
+#   RFTRA (Relative water stress factor for transpiration [-]):
+#     RFTRA = Actual Transpiration (TRA) / Potential Transpiration (TRAMX).
+#     Range: 0.0 (maximum stress — crop cannot transpire at all) to
+#            1.0 (no stress — crop transpires at full potential).
+#     Computed by WaterbalanceFD as: RFTRA = TRA / TRAMX.
+#     RFTRA < 1.0 on a given day means the crop was water-stressed:
+#       - Photosynthesis and biomass accumulation (TAGP) are reduced
+#       - Grain filling (TWSO) is reduced proportionally
+#       - Yield loss accumulates over stressed days
+#     After a successful irrigation event, RFTRA should rise back toward 1.0
+#     within 1–3 days as SM recovers into the non-stressed zone (SM > SMCR).
+#     Comparing RFTRA between irrigated and rainfed runs quantifies the
+#     irrigation benefit: more days at RFTRA=1.0 → higher yield potential.
+#
+#   LAI (Leaf Area Index [m²/m²]):
+#     Irrigation prevents early leaf senescence under stress. Irrigated crops
+#     maintain higher LAI during grain filling → more photosynthate to TWSO.
+#
+#   TAGP (Total Above-Ground Production [kg/ha]):
+#     Monotonically increases; reflects integrated carbon gain. Irrigation
+#     benefit shows as higher TAGP trajectory relative to rainfed baseline.
+#
+#   TWSO (Total Weight of Storage Organs [kg/ha]):
+#     The yield variable. Begins accumulating at anthesis (DVS ≥ 1.0).
+#     Irrigation during the grain-filling phase (DVS 1.0–2.0) is most
+#     effective at improving TWSO. This is the primary optimization target.
 TRACKED_VARIABLES: dict[str, str] = {
     "DVS":   "dvs",     # Development stage (0=emergence, 1=anthesis, 2=maturity)
-    "LAI":   "lai",     # Leaf Area Index [m²/m²]
-    "SM":    "sm",      # Volumetric soil moisture [cm³/cm³]
+    "LAI":   "lai",     # Leaf Area Index [m²/m²] — declines under sustained stress
+    "SM":    "sm",      # Volumetric soil moisture [cm³/cm³] — rises after irrigation
     "TAGP":  "tagp",    # Total above-ground production [kg/ha dry matter]
     "TWSO":  "twso",    # Total weight of storage organs (yield) [kg/ha]
     "TWLV":  "twlv",    # Total weight of leaves [kg/ha]
@@ -35,7 +72,10 @@ TRACKED_VARIABLES: dict[str, str] = {
     "TWRT":  "twrt",    # Total weight of roots [kg/ha]
     "TRA":   "tra",     # Actual crop transpiration [cm/day]
     "RD":    "rd",      # Rooting depth [cm]
-    "RFTRA": "rftra",   # Transpiration reduction factor [0-1] (1=no stress)
+    # RFTRA: Transpiration reduction factor [0–1].
+    # Primary irrigation stress diagnostic: RFTRA < 1.0 = crop under water stress.
+    # Irrigation should raise RFTRA toward 1.0 within 1–3 days of application.
+    "RFTRA": "rftra",
 }
 
 

@@ -31,7 +31,7 @@ from .weather_provider import create_weather_provider
 from .crop_provider import create_crop_provider
 from .soil_provider import create_soil_params
 from .site_provider import create_site_params
-from .agromanagement import build_agromanagement
+from .agromanagement import build_agromanagement, get_crop_start_type
 from .output_parser import (
     parse_batch_output,
     parse_summary_output,
@@ -89,6 +89,7 @@ def run_simulation(
     use_nasa_weather: bool = False,
     max_duration: int = 300,
     step_by_step: bool = False,
+    irrigation_events: Optional[list] = None,
 ) -> SimulationResult:
     """Run a complete WOFOST 7.2 water-limited simulation.
 
@@ -97,21 +98,27 @@ def run_simulation(
     returns parsed results.
 
     Args:
-        crop_name:        Lowercase PCSE crop name (e.g. "wheat", "maize")
-        variety_name:     PCSE variety key (e.g. "Winter_wheat_101")
-        sow_date:         Sowing date (defaults to 2020-10-15 for winter wheat)
-        harvest_date:     Harvest date (defaults to 2021-07-30)
-        latitude:         Site latitude for weather data
-        longitude:        Site longitude for weather data
-        elevation:        Site elevation in meters (synthetic weather only)
-        wav:              Initial available water in soil [cm]
-        soil_params:      Optional dict overriding default soil parameters.
-                          Keys: SMFCF, SMW, SM0, CRAIRC, RDMSOL, K0, SOPE, KSUB
-        crop_param_dir:   Path to WOFOST_crop_parameters (defaults to external_repos/)
-        use_nasa_weather: If True, fetch from NASA POWER API (requires internet)
-        max_duration:     Maximum crop duration in days
-        step_by_step:     If True, run day-by-day (needed for future EnKF).
-                          If False, use run_till_terminate() for speed.
+        crop_name:         Lowercase PCSE crop name (e.g. "wheat", "maize")
+        variety_name:      PCSE variety key (e.g. "Winter_wheat_101")
+        sow_date:          Sowing date (defaults to 2020-10-15 for winter wheat)
+        harvest_date:      Harvest date (defaults to 2021-07-30)
+        latitude:          Site latitude for weather data
+        longitude:         Site longitude for weather data
+        elevation:         Site elevation in meters (synthetic weather only)
+        wav:               Initial available water in soil [cm]
+        soil_params:       Optional dict overriding default soil parameters.
+                           Keys: SMFCF, SMW, SM0, CRAIRC, RDMSOL, K0, SOPE, KSUB
+        crop_param_dir:    Path to WOFOST_crop_parameters (defaults to external_repos/)
+        use_nasa_weather:  If True, fetch from NASA POWER API (requires internet)
+        max_duration:      Maximum crop duration in days
+        step_by_step:      If True, run day-by-day (needed for future EnKF).
+                           If False, use run_till_terminate() for speed.
+        irrigation_events: Optional list of irrigation event dicts, each with:
+                             "date"      (datetime.date or ISO string)
+                             "amount_mm" (float, water applied in mm)
+                           Passed verbatim to build_agromanagement() which converts
+                           them to PCSE TimedEvents with event_signal="irrigate".
+                           Pass None or [] for a rainfed (no irrigation) simulation.
 
     Returns:
         SimulationResult with daily outputs, summary, and harvest metrics
@@ -169,13 +176,20 @@ def run_simulation(
     )
     logger.info("ParameterProvider assembled: %d parameters", len(params))
 
-    # ── 6. AgroManagement ────────────────────────────────────────────────
+    # ── 6. AgroManagement ────────────────────────────────────────────
+    # irrigation_events (if any) are injected here as PCSE TimedEvents.
+    # crop_start_type is auto-detected: transplanted crops (rice, DVSI>0) need
+    # "emergence" to avoid TSUMEM=0 ZeroDivisionError in PCSE phenology.
+    # Direct-seeded crops (wheat, maize, DVSI=0) use "sowing" as usual.
+    crop_start_type = get_crop_start_type(crop_name, cropdata=cropd)
     agro = build_agromanagement(
         crop_name=crop_name,
         variety_name=variety_name,
         sow_date=sow_date,
         harvest_date=harvest_date,
         max_duration=max_duration,
+        irrigation_events=irrigation_events,
+        crop_start_type=crop_start_type,
     )
 
     # ── 7. Initialize WOFOST engine ──────────────────────────────────────

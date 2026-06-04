@@ -97,7 +97,13 @@ def run_simulation_from_request(request: SimulateRequest) -> SimulateResponse:
     soil_params = _fetch_soil_params(request)
 
     # ── Step 3: Run simulation engine ─────────────────────────────────────────
-    result = _run_engine(request, harvest_date, soil_params)
+    # Convert IrrigationEvent Pydantic objects → plain dicts so the engine
+    # layer stays decoupled from the API schema layer (no Pydantic in engine).
+    irrigation_dicts = [
+        {"date": ev.date, "amount_mm": ev.amount_mm}
+        for ev in (request.irrigation_events or [])
+    ]
+    result = _run_engine(request, harvest_date, soil_params, irrigation_dicts)
 
     # ── Step 4: Build and return API response ─────────────────────────────────
     response = _build_response(request, result)
@@ -176,6 +182,7 @@ def _run_engine(
     request: SimulateRequest,
     harvest_date: dt.date,
     soil_params: Optional[dict],
+    irrigation_dicts: Optional[list] = None,
 ) -> SimulationResult:
     """Call the WOFOST engine and handle engine-level exceptions.
 
@@ -183,16 +190,17 @@ def _run_engine(
     domain-specific exception types that the route can handle semantically.
 
     Engine parameter mapping:
-        request.crop           → crop_name
-        request.variety        → variety_name
-        request.sowing_date    → sow_date
-        harvest_date           → harvest_date  (resolved above)
-        request.latitude       → latitude
-        request.longitude      → longitude
-        soil_params            → soil_params (None → engine uses defaults)
+        request.crop             → crop_name
+        request.variety          → variety_name
+        request.sowing_date      → sow_date
+        harvest_date             → harvest_date  (resolved above)
+        request.latitude         → latitude
+        request.longitude        → longitude
+        soil_params              → soil_params (None → engine uses defaults)
         request.use_real_weather → use_nasa_weather
-        request.max_duration   → max_duration
-        step_by_step=False     → batch mode (fastest; step_by_step=True for EnKF)
+        request.max_duration     → max_duration
+        irrigation_dicts         → irrigation_events (plain dicts, schema-agnostic)
+        step_by_step=False       → batch mode (fastest; step_by_step=True for EnKF)
     """
     try:
         return run_simulation(
@@ -205,6 +213,7 @@ def _run_engine(
             soil_params=soil_params,
             use_nasa_weather=request.use_real_weather,
             max_duration=request.max_duration,
+            irrigation_events=irrigation_dicts or None,
             # step_by_step=False: run_till_terminate() — fastest for batch simulation.
             # When EnKF is added (Phase 3), this will be set to True and the loop
             # will interleave wofost.run(days=1) with assimilation updates.

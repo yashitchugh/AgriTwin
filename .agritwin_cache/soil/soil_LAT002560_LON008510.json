@@ -1,12 +1,12 @@
 {
-  "latitude": 1.299,
-  "longitude": 34.5,
-  "fetched_at": "2026-05-31T00:02:12.757894",
+  "latitude": 25.6,
+  "longitude": 85.1,
+  "fetched_at": "2026-06-04T13:43:04.405309",
   "wofost_params": {
-    "SM0": 0.3962,
-    "SMFCF": 0.3123,
-    "SMW": 0.2068,
-    "CRAIRC": 0.0838,
+    "SM0": 0.3382,
+    "SMFCF": 0.333,
+    "SMW": 0.1428,
+    "CRAIRC": 0.02,
     "RDMSOL": 120.0,
     "K0": 10.0,
     "SOPE": 10.0,
@@ -17,8 +17,8 @@
     "geometry": {
       "type": "Point",
       "coordinates": [
-        34.5,
-        1.299
+        85.1,
+        25.6
       ]
     },
     "properties": {
@@ -40,7 +40,7 @@
               },
               "label": "0-5cm",
               "values": {
-                "mean": 94
+                "mean": 137
               }
             },
             {
@@ -51,7 +51,7 @@
               },
               "label": "5-15cm",
               "values": {
-                "mean": 98
+                "mean": 138
               }
             },
             {
@@ -62,7 +62,7 @@
               },
               "label": "15-30cm",
               "values": {
-                "mean": 99
+                "mean": 137
               }
             }
           ]
@@ -84,7 +84,7 @@
               },
               "label": "0-5cm",
               "values": {
-                "mean": 393
+                "mean": 243
               }
             },
             {
@@ -95,7 +95,7 @@
               },
               "label": "5-15cm",
               "values": {
-                "mean": 381
+                "mean": 269
               }
             },
             {
@@ -106,7 +106,7 @@
               },
               "label": "15-30cm",
               "values": {
-                "mean": 393
+                "mean": 307
               }
             }
           ]
@@ -128,7 +128,7 @@
               },
               "label": "0-5cm",
               "values": {
-                "mean": 341
+                "mean": 295
               }
             },
             {
@@ -139,7 +139,7 @@
               },
               "label": "5-15cm",
               "values": {
-                "mean": 345
+                "mean": 292
               }
             },
             {
@@ -150,7 +150,7 @@
               },
               "label": "15-30cm",
               "values": {
-                "mean": 337
+                "mean": 279
               }
             }
           ]
@@ -172,7 +172,7 @@
               },
               "label": "0-5cm",
               "values": {
-                "mean": 404
+                "mean": 333
               }
             },
             {
@@ -183,7 +183,7 @@
               },
               "label": "5-15cm",
               "values": {
-                "mean": 400
+                "mean": 338
               }
             },
             {
@@ -194,7 +194,7 @@
               },
               "label": "15-30cm",
               "values": {
-                "mean": 391
+                "mean": 340
               }
             }
           ]
@@ -216,7 +216,7 @@
               },
               "label": "0-5cm",
               "values": {
-                "mean": 318
+                "mean": 334
               }
             },
             {
@@ -227,7 +227,7 @@
               },
               "label": "5-15cm",
               "values": {
-                "mean": 310
+                "mean": 331
               }
             },
             {
@@ -238,7 +238,7 @@
               },
               "label": "15-30cm",
               "values": {
-                "mean": 312
+                "mean": 334
               }
             }
           ]
@@ -260,7 +260,7 @@
               },
               "label": "0-5cm",
               "values": {
-                "mean": 204
+                "mean": 141
               }
             },
             {
@@ -271,7 +271,7 @@
               },
               "label": "5-15cm",
               "values": {
-                "mean": 205
+                "mean": 142
               }
             },
             {
@@ -282,13 +282,13 @@
               },
               "label": "15-30cm",
               "values": {
-                "mean": 209
+                "mean": 144
               }
             }
           ]
         }
       ]
     },
-    "query_time_s": 2.378859758377075
+    "query_time_s": 5.853200912475586
   }
 }

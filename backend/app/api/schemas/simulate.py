@@ -6,7 +6,7 @@ Defines the request body and response models for the simulation endpoint.
 
 Design principles:
   1. Request fields map 1-to-1 to what a crop scientist would recognise.
-  2. Response includes the 4 primary state variables (LAI, SM, TAGP, TWSO)
+  2. Response includes the 5 primary state variables (LAI, SM, TAGP, TWSO, RFTRA)
      as a daily time series, plus phenological summary and agronomic metrics.
   3. Every field has a description, units, and example value for auto-generated
      Swagger/ReDoc documentation.
@@ -18,14 +18,82 @@ Design principles:
        is implemented (Phase 4)
 
 PCSE naming conventions (from docs/implementation_notes.md):
-  - Internal PCSE variable names: UPPERCASE (DVS, LAI, SM, TAGP, TWSO)
-  - API / database field names:   lowercase (dvs, lai, sm, tagp, twso)
+  - Internal PCSE variable names: UPPERCASE (DVS, LAI, SM, TAGP, TWSO, RFTRA)
+  - API / database field names:   lowercase (dvs, lai, sm, tagp, twso, rftra)
+
+Irrigation support (Phase 2):
+  - IrrigationEvent: a single timed water application event
+  - SimulateRequest.irrigation_events: optional list of events (default: [])
+  - PCSE signal name: "irrigate"  (NOT "irrigation" — exact PCSE string required)
+  - Each event maps to a PCSE AgroManagement TimedEvents entry with:
+      amount      — water applied in mm (stored as-is; PCSE reads mm)
+      efficiency  — fraction reaching root zone (0.7 default = 70% application efficiency)
+  - Dates are validated to fall within [sowing_date, harvest_date] at schema level
 """
 
 import datetime as dt
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# IRRIGATION EVENT SCHEMA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class IrrigationEvent(BaseModel):
+    """A single timed irrigation application event.
+
+    Maps directly to one row in PCSE AgroManagement's TimedEvents events_table:
+        events_table:
+          - YYYY-MM-DD: {amount: <mm>, efficiency: 0.7}
+
+    PCSE irrigation mechanics:
+      - The "irrigate" signal is sent to WOFOST's WaterbalanceFD sub-model.
+      - `amount` (mm) is added to the root-zone water content on the event date.
+      - `efficiency` (0–1) accounts for delivery losses (evaporation, runoff
+        before infiltration). Effective water added = amount × efficiency.
+      - PCSE silently ignores events outside the campaign window — validation
+        at the schema level prevents this mistake.
+
+    Validation rules:
+      - amount_mm > 0          (no zero or negative irrigation)
+      - amount_mm <= 200       (physical cap: 200 mm in one application is an
+                                 extreme flood event; typical values: 20–80 mm)
+      - date must be >= sowing_date and <= harvest_date (validated in SimulateRequest)
+    """
+
+    date: dt.date = Field(
+        ...,
+        description=(
+            "Date of irrigation application in ISO format (YYYY-MM-DD). "
+            "Must fall between sowing_date and harvest_date (inclusive). "
+            "PCSE silently drops events outside the campaign window — "
+            "this validator prevents silent data loss."
+        ),
+        examples=["2021-01-15"],
+    )
+    amount_mm: float = Field(
+        ...,
+        gt=0,
+        le=200,
+        description=(
+            "Volume of water applied in millimetres [mm]. "
+            "Represents the depth of water applied to the field surface. "
+            "PCSE's WaterbalanceFD receives this as 'amount' in its irrigation signal. "
+            "Typical single-application values: 20–80 mm. "
+            "Maximum allowed: 200 mm (extreme flood irrigation). "
+            "Must be strictly positive (> 0)."
+        ),
+        examples=[40.0],
+    )
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "date": "2021-01-15",
+            "amount_mm": 40.0,
+        }
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -38,7 +106,10 @@ class SimulateRequest(BaseModel):
     Minimum viable request requires 5 fields: latitude, longitude, crop,
     variety, sowing_date. All other fields have sensible defaults.
 
-    Curl example:
+    Irrigation events are optional — omitting them (or passing []) produces
+    a rainfed simulation identical to pre-irrigation behaviour (backward compatible).
+
+    Curl example (with irrigation):
         curl -X POST http://localhost:8000/simulate \\
              -H 'Content-Type: application/json' \\
              -d '{
@@ -46,7 +117,12 @@ class SimulateRequest(BaseModel):
                "longitude": 77.2,
                "crop": "wheat",
                "variety": "Winter_wheat_101",
-               "sowing_date": "2020-10-15"
+               "sowing_date": "2020-10-15",
+               "harvest_date": "2021-07-30",
+               "irrigation_events": [
+                 {"date": "2021-01-15", "amount_mm": 40},
+                 {"date": "2021-02-20", "amount_mm": 50}
+               ]
              }'
     """
 
@@ -114,6 +190,27 @@ class SimulateRequest(BaseModel):
             "comes first. For most crops, 270–365 days from sowing is sufficient."
         ),
         examples=["2021-07-30"],
+    )
+
+    # ── Irrigation ────────────────────────────────────────────────────────────
+    irrigation_events: list[IrrigationEvent] = Field(
+        default=[],
+        description=(
+            "Optional list of timed irrigation applications. "
+            "Each event specifies a date and water amount in mm. "
+            "Omitting this field (or passing []) produces a rainfed simulation "
+            "— fully backward compatible with existing requests. "
+            "Events are mapped to PCSE AgroManagement TimedEvents with "
+            "event_signal='irrigate'. Application efficiency defaults to 0.7 "
+            "(70% of applied water reaches the root zone). "
+            "Dates must fall between sowing_date and harvest_date."
+        ),
+        examples=[
+            [
+                {"date": "2021-01-15", "amount_mm": 40},
+                {"date": "2021-02-20", "amount_mm": 50},
+            ]
+        ],
     )
 
     # ── Simulation control ────────────────────────────────────────────────────
@@ -191,10 +288,38 @@ class SimulateRequest(BaseModel):
                 )
         return self
 
-    class Config:
+    @model_validator(mode="after")
+    def irrigation_dates_within_season(self) -> "SimulateRequest":
+        """Validate all irrigation event dates fall within the growing season.
+
+        PCSE silently ignores TimedEvents that fall outside the campaign window
+        (docs/agromanagement_guide.md Mistake 4). A silent ignore would confuse
+        users who expect their irrigation to be applied — this validator
+        raises a clear error instead.
+
+        The validation window is [sowing_date, harvest_date]. When harvest_date
+        is None, only the lower bound (sowing_date) is enforced, since the
+        upper bound is determined at runtime by max_duration.
+        """
+        for ev in self.irrigation_events:
+            if ev.date < self.sowing_date:
+                raise ValueError(
+                    f"Irrigation event on {ev.date} is before sowing_date "
+                    f"({self.sowing_date}). Irrigation before crop emergence "
+                    f"is not supported — move the event to on or after sowing_date."
+                )
+            if self.harvest_date is not None and ev.date > self.harvest_date:
+                raise ValueError(
+                    f"Irrigation event on {ev.date} is after harvest_date "
+                    f"({self.harvest_date}). PCSE would silently ignore this event. "
+                    f"Move the event before harvest_date or remove it."
+                )
+        return self
+
+    model_config = ConfigDict(
         # Allow extra fields to be ignored (forward compatibility)
-        extra = "ignore"
-        json_schema_extra = {
+        extra="ignore",
+        json_schema_extra={
             "example": {
                 "latitude": 28.6,
                 "longitude": 77.2,
@@ -204,8 +329,13 @@ class SimulateRequest(BaseModel):
                 "harvest_date": "2021-07-30",
                 "use_real_weather": True,
                 "use_real_soil": True,
+                "irrigation_events": [
+                    {"date": "2021-01-15", "amount_mm": 40},
+                    {"date": "2021-02-20", "amount_mm": 50},
+                ],
             }
-        }
+        },
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -215,15 +345,21 @@ class SimulateRequest(BaseModel):
 class DailyState(BaseModel):
     """One day of WOFOST simulation output.
 
-    The 4 primary state variables (lai, sm, tagp, twso) are the core outputs
-    documented in the task requirements. Additional variables (dvs, tra, rd)
-    are included because they are scientifically valuable and required for
-    the EnKF state vector in Phase 3.
+    The 5 primary state variables (lai, sm, tagp, twso, rftra) are the core
+    outputs documented in the task requirements. Additional variables (dvs,
+    tra, rd) are included because they are scientifically valuable and
+    required for the EnKF state vector in Phase 3.
 
     Why Optional?
         Before sowing, crop variables (lai, tagp, etc.) are None — the plant
         does not exist yet. Soil moisture (sm) exists from day 1.
         After maturity, some variables plateau or become None.
+
+    Irrigation diagnostics:
+        rftra — the key irrigation stress indicator. Values < 1.0 on days
+        without irrigation events indicate the crop was water-stressed.
+        After an irrigation event, rftra should rise toward 1.0 if sufficient
+        water was applied.
 
     EnKF design note (Phase 3):
         When data assimilation is implemented, two fields will be added:
@@ -252,7 +388,9 @@ class DailyState(BaseModel):
         description=(
             "Volumetric soil moisture in the root zone [cm³ water / cm³ soil]. "
             "Ranges between SMW (wilting point) and SM0 (saturation). "
-            "Non-None from simulation day 1 (waterbalance initializes immediately)."
+            "Non-None from simulation day 1 (waterbalance initializes immediately). "
+            "Should rise visibly on irrigation event dates and then decline as "
+            "the crop extracts water via transpiration."
         ),
     )
     tagp: Optional[float] = Field(
@@ -269,6 +407,22 @@ class DailyState(BaseModel):
             "Total Weight of Storage Organs [kg / ha]. "
             "Grain/seed/tuber weight — the economically relevant yield component. "
             "Starts accumulating at anthesis (DVS=1), reaches maximum at maturity."
+        ),
+    )
+
+    # ── Irrigation stress diagnostic ──────────────────────────────────────
+    rftra: Optional[float] = Field(
+        default=None,
+        description=(
+            "Relative water stress factor for transpiration [-]. "
+            "RFTRA = Actual Transpiration / Potential Transpiration. "
+            "Range: 0.0 (maximum stress, crop cannot transpire) to "
+            "1.0 (no stress, crop transpires at full potential). "
+            "This is the primary irrigation diagnostic variable: "
+            "RFTRA < 1.0 on a given day indicates the crop was water-stressed. "
+            "After a successful irrigation event, RFTRA should approach 1.0. "
+            "Useful for identifying when and how much irrigation improved "
+            "yield potential relative to a rainfed baseline."
         ),
     )
 
@@ -377,7 +531,7 @@ class SimulateResponse(BaseModel):
         request         → echo of input parameters (for traceability)
         metrics         → 6 key agronomic numbers
         summary         → phenological dates from WOFOST
-        daily_states    → full daily time series (LAI, SM, TAGP, TWSO, ...)
+        daily_states    → full daily time series (LAI, SM, TAGP, TWSO, RFTRA, ...)
 
     The response is intentionally verbose: downstream dashboards and the
     future EnKF service need the full daily_states array. If bandwidth is
@@ -417,6 +571,6 @@ class SimulateResponse(BaseModel):
         description=(
             "Daily simulation output time series. One record per simulated day "
             "from campaign_start (sowing_date - 14 days) to harvest/maturity. "
-            "Primary outputs per day: lai, sm, tagp, twso."
+            "Primary outputs per day: lai, sm, tagp, twso, rftra."
         ),
     )
