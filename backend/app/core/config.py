@@ -21,6 +21,12 @@ Scalability notes:
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load .env from the project root (4 levels up from this file)
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
+
 # ── Project root resolution ──────────────────────────────────────────────────
 # Resolves: backend/app/core/config.py → 3 levels up → project root
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -92,11 +98,14 @@ class Settings:
     # Timeout for SoilGrids API requests (seconds).
     SOIL_API_TIMEOUT: int = int(os.getenv("AGRITWIN_SOIL_TIMEOUT", "30"))
 
-    # ── Future: Database (Phase 2) ────────────────────────────────────────
-    # DATABASE_URL: str = os.getenv(
-    #     "DATABASE_URL",
-    #     "postgresql://agritwin:password@localhost:5432/agritwin"
-    # )
+    # ── Database (Phase 2 — now active) ────────────────────────────────────
+    # Read from .env → DATABASE_URL. Defaults to a local SQLite file.
+    # Switch to PostgreSQL by updating .env:
+    #   DATABASE_URL=postgresql+psycopg2://agritwin:pw@localhost:5432/agritwin
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL",
+        "sqlite:///./agritwin.db",
+    )
 
     # ── Future: EnKF (Phase 3) ────────────────────────────────────────────
     # Number of parallel ensemble members for the Ensemble Kalman Filter.

@@ -60,4 +60,4 @@ external_repos/
 generated_agro/
 
 # Temporary outputs
-outputs/
+outputs/agritwin.db
