@@ -13,14 +13,28 @@ Execution flow for a single POST /simulate call:
   1. Resolve harvest_date (default: sowing + max_duration)
   2. Fetch real soil data from SoilGrids (with cache) — or use defaults
   3. Call engine.run_simulation() → SimulationResult
-  4. Map SimulationResult → SimulateResponse (schema translation)
-  5. Return to route handler
+  4. Persist SimulationRun + DailyOutputs to the database (if db session provided)
+  5. Map SimulationResult → SimulateResponse (schema translation)
+  6. Return to route handler
 
-Architecture notes (from docs/fastapi_architecture.md Section 8):
+Persistence flow (step 4 detail):
+  a. Build SimulationRun ORM object from request + engine results
+  b. Save metadata columns (crop, dates, lat/lon, flags)
+  c. Save metrics payload (yield, peak_lai, HI, TAGP, TWSO, total_days)
+  d. Save phenological summary (dos, doe, doa, dom, doh, laimax, tagp, twso)
+  e. Save weather snapshot (source, date range)
+  f. Save soil snapshot (SMW, SMFCF, SM0, etc. — exactly as used)
+  g. Bulk-insert DailyOutput rows (one per simulated day)
+
+Architecture notes:
+  - run_simulation_from_request() accepts an optional SQLAlchemy Session.
+    If db=None (e.g. in unit tests), persistence is skipped entirely.
+    If db is provided, all 7 save steps run within the same transaction.
+  - Persistence failure never crashes the response.  If the DB write fails,
+    the SimulateResponse is still returned (without simulation_id).
+    The error is logged at ERROR level for monitoring.
   - This service is STATELESS: no instance variables that change between calls.
-  - Uses a module-level _soil_service singleton (SoilService is also stateless).
-  - The function signature uses only stdlib + local types — no FastAPI imports.
-  - Custom exceptions propagate to the route, which converts them to HTTPException.
+  - The function signature stays decoupled from FastAPI — no HTTPException here.
 
 EnKF readiness (Phase 3):
   The run_simulation_from_request() function will need to:
@@ -32,7 +46,10 @@ EnKF readiness (Phase 3):
 
 import logging
 import datetime as dt
+import uuid
 from typing import Optional
+
+from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
 from backend.app.core.exceptions import (
@@ -62,25 +79,36 @@ _soil_service = SoilService()
 # PUBLIC API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def run_simulation_from_request(request: SimulateRequest) -> SimulateResponse:
+def run_simulation_from_request(
+    request: SimulateRequest,
+    *,
+    db: Optional[Session] = None,
+) -> SimulateResponse:
     """Execute a complete WOFOST simulation from a validated API request.
 
     This is the main entry point called by the route handler. It:
       1. Resolves optional dates
       2. Fetches real soil data (with graceful fallback to defaults)
       3. Calls the simulation engine
-      4. Converts the internal SimulationResult to the API response schema
+      4. Persists results to the database (if db session is provided)
+      5. Converts the internal SimulationResult to the API response schema
 
     Args:
         request: Validated SimulateRequest (all validators have already passed)
+        db:      Optional SQLAlchemy Session (keyword-only).
+                 If provided: SimulationRun + DailyOutputs are persisted and
+                 simulation_id is returned in the response.
+                 If None: persistence is skipped (useful in unit tests).
 
     Returns:
-        SimulateResponse ready to serialize and return to the client
+        SimulateResponse ready to serialize and return to the client.
+        response.simulation_id is populated when db is provided and persistence
+        succeeds. It is None when db=None or if DB write fails.
 
     Raises:
-        SimulationError:  PCSE engine internal failure
-        WeatherFetchError: NASA POWER API unreachable (when use_real_weather=True)
-        InvalidCropError:  crop_name or variety_name not in PCSE database
+        SimulationError:       PCSE engine internal failure
+        WeatherFetchError:     NASA POWER API unreachable (when use_real_weather=True)
+        InvalidCropError:      crop_name or variety_name not in PCSE database
         InvalidParameterError: Physical constraints violated in derived parameters
     """
     logger.info(
@@ -105,15 +133,33 @@ def run_simulation_from_request(request: SimulateRequest) -> SimulateResponse:
     ]
     result = _run_engine(request, harvest_date, soil_params, irrigation_dicts)
 
-    # ── Step 4: Build and return API response ─────────────────────────────────
-    response = _build_response(request, result)
+    # ── Step 4: Persist to database ───────────────────────────────────────────
+    # All 7 save steps run here. Failure is non-fatal: the response is always
+    # returned. The simulation_id in the response is None if persistence fails.
+    simulation_id: Optional[uuid.UUID] = None
+    if db is not None:
+        simulation_id = _persist_results(
+            db=db,
+            request=request,
+            result=result,
+            harvest_date=harvest_date,
+            soil_params=soil_params,
+        )
+
+    # ── Step 5: Build and return API response ─────────────────────────────────
+    response = _build_response(
+        request=request,
+        result=result,
+        simulation_id=simulation_id,
+    )
 
     logger.info(
-        "Simulation complete: %s/%s → %d days, yield=%.0f kg/ha, HI=%.3f",
+        "Simulation complete: %s/%s → %d days, yield=%.0f kg/ha, HI=%.3f, db_id=%s",
         request.crop, request.variety,
         result.total_days,
         result.metrics.get("final_twso_kg_ha", 0),
         result.metrics.get("harvest_index", 0),
+        simulation_id,
     )
     return response
 
@@ -236,9 +282,182 @@ def _run_engine(
         ) from e
 
 
+def _persist_results(
+    *,
+    db: Session,
+    request: SimulateRequest,
+    result: SimulationResult,
+    harvest_date: dt.date,
+    soil_params: Optional[dict],
+) -> Optional[uuid.UUID]:
+    """Persist a completed simulation to the database.
+
+    Saves 7 artefacts within the caller's transaction:
+      1. SimulationRun row (metadata, scalar results, phenological dates)
+      2. metrics_payload  (AgronomicMetrics dict as JSON)
+      3. summary_payload  (PhenologicalSummary dict as JSON)
+      4. request_payload  (full SimulateRequest as JSON for reproducibility)
+      5. weather_snapshot (source + date range used by the engine)
+      6. soil_snapshot    (exact soil parameters fed to the engine)
+      7. DailyOutput rows (one per simulated day, bulk-inserted)
+
+    Transaction ownership:
+      This function calls flush() through the repository layer.
+      It does NOT commit.  The route handler's get_db() dependency commits
+      on clean exit, or rolls back on exception.
+
+    Failure isolation:
+      If any step raises an exception, the error is caught and logged.
+      The function returns None, signalling to the caller that the DB write
+      failed.  This ensures a DB outage never prevents the HTTP response
+      from reaching the client.
+
+    Args:
+        db:          An open SQLAlchemy Session (provided by get_db dependency).
+        request:     The original validated SimulateRequest.
+        result:      The SimulationResult from the WOFOST engine.
+        harvest_date: Effective harvest date (resolved from request).
+        soil_params:  Soil parameters used by the engine (None if defaults).
+
+    Returns:
+        UUID of the newly created SimulationRun, or None if persistence failed.
+    """
+    # Lazy imports inside the function to avoid circular imports at module load.
+    # (models → db.base → db.session → nothing; service → models is safe here)
+    from backend.app.models.simulation_run import SimulationRun
+    from backend.app.models.daily_output import DailyOutput
+    from backend.app.repositories.simulation_repository import SimulationRepository
+    from backend.app.repositories.daily_output_repository import DailyOutputRepository
+
+    try:
+        sim_repo = SimulationRepository(db)
+        daily_repo = DailyOutputRepository(db)
+
+        m = result.metrics      # plain dict from compute_harvest_metrics()
+        s = result.summary      # plain dict from parse_summary_output(), may be {}
+
+        # ── 1. Build SimulationRun ORM object ─────────────────────────────────
+        run_id = uuid.uuid4()
+        run = SimulationRun(
+            id=run_id,
+
+            # No field_id yet — ad-hoc simulation (Phase 2 will wire this up
+            # when the farm/field registration endpoints are live).
+            field_id=None,
+
+            # ── 2. Metadata ───────────────────────────────────────────────────
+            run_type=(
+                "irrigated"
+                if request.irrigation_events
+                else "baseline"
+            ),
+            status="completed",
+            model_name="Wofost72_WLP_FD",
+            model_version="7.2",
+            latitude=request.latitude,
+            longitude=request.longitude,
+            crop=request.crop,
+            variety=request.variety,
+            sowing_date=request.sowing_date,
+            harvest_date=harvest_date,
+            use_real_weather=request.use_real_weather,
+            use_real_soil=request.use_real_soil,
+
+            # ── 3. Scalar metrics (denormalised for fast queries) ─────────────
+            yield_kg_ha=m.get("final_twso_kg_ha"),
+            peak_lai=m.get("peak_lai"),
+            harvest_index=m.get("harvest_index"),
+            final_tagp=m.get("final_tagp_kg_ha"),
+            final_twso=m.get("final_twso_kg_ha"),
+            total_days=result.total_days,
+
+            # ── 4. Phenological summary (scalar dates) ────────────────────────
+            # Convert ISO strings back to date objects for the Date columns.
+            dos=_parse_date(s.get("dos")),
+            doe=_parse_date(s.get("doe")),
+            doa=_parse_date(s.get("doa")),
+            dom=_parse_date(s.get("dom")),
+            doh=_parse_date(s.get("doh")),
+
+            # ── 5-7. JSON payload columns ─────────────────────────────────────
+            # request_payload: full request body → enables exact run reproduction
+            request_payload=request.model_dump(mode="json"),
+
+            # metrics_payload: full AgronomicMetrics dict as returned to the API
+            metrics_payload=m,
+
+            # summary_payload: full PhenologicalSummary dict
+            summary_payload=s if s else None,
+
+            # weather_snapshot: source metadata (not the full daily series)
+            weather_snapshot=_build_weather_snapshot(request),
+
+            # soil_snapshot: exact parameters fed to the WOFOST engine
+            soil_snapshot=soil_params,
+
+            # warnings: placeholder — will collect engine warnings in Phase 3
+            warnings=[],
+            notes=None,
+        )
+
+        # ── Save SimulationRun (steps 1–6) ────────────────────────────────────
+        sim_repo.save_simulation(run)
+        logger.info("Persisted SimulationRun id=%s", run_id)
+
+        # ── 7. Bulk-insert DailyOutput rows ───────────────────────────────────
+        # result.daily_output is a list of dicts with lowercase keys matching
+        # the DailyOutput column names exactly (produced by output_parser.py).
+        daily_rows = [
+            DailyOutput(
+                simulation_run_id=run_id,
+                # Date is stored as ISO string in result.daily_output; convert to date.
+                date=dt.date.fromisoformat(record["date"]),
+                dvs=record.get("dvs"),
+                lai=record.get("lai"),
+                sm=record.get("sm"),
+                tagp=record.get("tagp"),
+                twso=record.get("twso"),
+                twlv=record.get("twlv"),
+                twst=record.get("twst"),
+                twrt=record.get("twrt"),
+                rftra=record.get("rftra"),
+                tra=record.get("tra"),
+                evs=record.get("evs"),
+                rd=record.get("rd"),
+            )
+            for record in result.daily_output
+        ]
+        daily_repo.save_daily_outputs(daily_rows)
+        logger.info(
+            "Persisted %d DailyOutput rows for SimulationRun id=%s",
+            len(daily_rows), run_id,
+        )
+
+        return run_id
+
+    except Exception as exc:
+        # Persistence failure must never prevent the HTTP response.
+        # Log with full traceback; return None so the caller omits simulation_id.
+        logger.error(
+            "DB persistence failed for %s/%s at (%.4f, %.4f): %s",
+            request.crop, request.variety,
+            request.latitude, request.longitude,
+            exc,
+            exc_info=True,
+        )
+        # Roll back any partial writes from this persistence attempt.
+        # The session is still usable after rollback (get_db handles close).
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
+
+
 def _build_response(
     request: SimulateRequest,
     result: SimulationResult,
+    simulation_id: Optional[uuid.UUID] = None,
 ) -> SimulateResponse:
     """Translate a SimulationResult into the API SimulateResponse schema.
 
@@ -250,6 +469,7 @@ def _build_response(
         result.daily_output  → list[DailyState]
         result.metrics       → AgronomicMetrics
         result.summary       → PhenologicalSummary (if available)
+        simulation_id        → SimulateResponse.simulation_id (UUID | None)
     """
     # ── Daily states → DailyState list ───────────────────────────────────────
     # result.daily_output is already normalized: lowercase keys, ISO date strings.
@@ -286,8 +506,42 @@ def _build_response(
             f"{result.total_days} days simulated, "
             f"yield = {final_yield:.0f} kg/ha."
         ),
+        simulation_id=simulation_id,
         request=request,
         metrics=metrics,
         summary=summary,
         daily_states=daily_states,
     )
+
+
+# ── Small private utilities ───────────────────────────────────────────────────
+
+def _parse_date(value: Optional[str]) -> Optional[dt.date]:
+    """Convert an ISO date string to a date object, or return None."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, dt.date):
+            return value
+        return dt.date.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def _build_weather_snapshot(request: SimulateRequest) -> dict:
+    """Build a compact weather metadata dict for storage in weather_snapshot.
+
+    Stores the provenance of weather data used (not the full daily series,
+    which is in DailyOutput). Useful for diagnosing climate-related anomalies.
+    """
+    return {
+        "source": "nasa_power" if request.use_real_weather else "synthetic",
+        "latitude": request.latitude,
+        "longitude": request.longitude,
+        "season_start": request.sowing_date.isoformat(),
+        "season_end": (
+            request.harvest_date.isoformat()
+            if request.harvest_date
+            else None
+        ),
+    }

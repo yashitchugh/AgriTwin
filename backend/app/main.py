@@ -56,6 +56,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.core.config import settings
 from backend.app.api.routes import simulate
+from backend.app.api.routes.simulations import router as simulations_router
+from backend.app.api.routes.fields import router as fields_router
+from backend.app.db.session import create_tables
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # Configure once at startup. All loggers in the application inherit this config.
@@ -87,11 +90,40 @@ app = FastAPI(
             ),
         },
         {
+            "name": "Simulations",
+            "description": (
+                "Retrieve and manage stored simulation history. "
+                "Query past runs, download time series, and delete records."
+            ),
+        },
+        {
+            "name": "Fields",
+            "description": (
+                "CRUD for Field records — GPS-located agricultural plots. "
+                "Fields group simulation runs by physical location."
+            ),
+        },
+        {
             "name": "System",
             "description": "Health check and service metadata endpoints.",
         },
     ],
 )
+
+
+# ── Database startup ──────────────────────────────────────────────────────────
+# Create all tables on startup (idempotent — safe to call on every boot).
+# In production with PostgreSQL, replace this with Alembic migrations.
+@app.on_event("startup")
+def on_startup() -> None:
+    """Initialise the database schema on server start.
+
+    Uses Base.metadata.create_all() with CREATE TABLE IF NOT EXISTS semantics.
+    For SQLite: creates agritwin.db and all 4 tables on first boot.
+    For PostgreSQL: only creates tables that don't already exist.
+    """
+    create_tables()
+    logger.info("Database tables verified / created.")
 
 
 # ── CORS middleware ───────────────────────────────────────────────────────────
@@ -112,17 +144,23 @@ app.add_middleware(
 # namespace. Routes inside each router file define the suffix.
 #
 # Currently mounted:
-#   simulate.router → POST /simulate, GET /simulate/crops
-#
-# Planned (add when implemented):
-#   app.include_router(farms.router,        prefix="/farms",        tags=["Farms"])
-#   app.include_router(observations.router, prefix="/observations", tags=["Observations"])
-#   app.include_router(assimilate.router,   prefix="/assimilate",   tags=["Assimilation"])
-#   app.include_router(whatif.router,       prefix="/whatif",       tags=["What-If"])
+#   simulate.router      → POST /simulate, GET /simulate/crops
+#   simulations_router   → GET /simulations, GET /simulations/{id}, DELETE /simulations/{id}
+#   fields_router        → GET /fields, POST /fields, GET /fields/{id}, DELETE /fields/{id}
 app.include_router(
     simulate.router,
     prefix="/simulate",
     tags=["Simulation"],
+)
+app.include_router(
+    simulations_router,
+    prefix="/simulations",
+    tags=["Simulations"],
+)
+app.include_router(
+    fields_router,
+    prefix="/fields",
+    tags=["Fields"],
 )
 
 
@@ -139,22 +177,19 @@ app.include_router(
     ),
 )
 def health_check() -> dict:
-    """Return service health status.
+    """Return service health and database connectivity status."""
+    from backend.app.db.session import engine
+    db_status = "unknown"
+    try:
+        with engine.connect() as conn:
+            conn.execute(__import__('sqlalchemy').text("SELECT 1"))
+        db_status = "connected"
+    except Exception as e:
+        db_status = f"error: {e}"
 
-    Always returns HTTP 200 with status='ok' if the server is running.
-    In Phase 2 (database), this will also check the database connection.
-
-    Future extension:
-        {
-            "status": "ok",
-            "version": "0.2.0",
-            "database": "connected",  ← Phase 2
-            "weather_cache": "warm",
-            "soil_cache": "warm",
-        }
-    """
     return {
         "status": "ok",
         "service": "agritwin",
         "version": settings.APP_VERSION,
+        "database": db_status,
     }

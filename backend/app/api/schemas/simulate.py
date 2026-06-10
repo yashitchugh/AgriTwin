@@ -32,6 +32,7 @@ Irrigation support (Phase 2):
 """
 
 import datetime as dt
+import uuid
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -528,6 +529,7 @@ class SimulateResponse(BaseModel):
     Structure:
         status          → "success" | "error"
         message         → human-readable summary
+        simulation_id   → UUID of the persisted SimulationRun (None if DB unavailable)
         request         → echo of input parameters (for traceability)
         metrics         → 6 key agronomic numbers
         summary         → phenological dates from WOFOST
@@ -538,6 +540,17 @@ class SimulateResponse(BaseModel):
     a concern in production, a ?fields=lai,sm query parameter can be added
     to filter columns — see docs/fastapi_architecture.md Section 7.
 
+    Database persistence note:
+        simulation_id is populated when the SimulationRun record and all
+        DailyOutput rows are successfully written to the database after the
+        simulation completes. It is None when:
+          - The database session was not provided (unit tests / offline mode)
+          - The DB write failed (error is logged; the simulation result is
+            still returned so the client is never left without data)
+        Use simulation_id with future endpoints:
+          GET /simulate/{simulation_id}          → retrieve stored results
+          GET /simulate/{simulation_id}/daily    → retrieve daily time series
+
     EnKF design note (Phase 3):
         The daily_states list will carry EnKF metadata (assimilated flag,
         ensemble spread) once assimilation is implemented. The response
@@ -547,6 +560,18 @@ class SimulateResponse(BaseModel):
 
     status: str = Field(description="'success' or 'error'")
     message: str = Field(description="Human-readable summary of the simulation result")
+
+    # Database persistence identifier — populated when the run is saved to the DB.
+    simulation_id: Optional[uuid.UUID] = Field(
+        default=None,
+        description=(
+            "UUID of the SimulationRun record in the database. "
+            "Use this to retrieve stored results via future GET endpoints. "
+            "None if the database write was skipped or failed "
+            "(the simulation result is still fully returned in this response)."
+        ),
+        examples=["3fa85f64-5717-4562-b3fc-2c963f66afa6"],
+    )
 
     # Echo the request so callers don't need to track what they sent
     request: SimulateRequest = Field(

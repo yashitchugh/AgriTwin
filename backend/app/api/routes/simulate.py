@@ -17,21 +17,30 @@ Architecture rules (from docs/fastapi_architecture.md):
      Services raise domain-specific exceptions (not HTTPException).
   4. All routes use the router singleton — never `app = FastAPI()` in route files.
 
+Database session injection:
+  The `db` parameter uses FastAPI's Depends(get_db) pattern.
+  get_db() yields a Session, commits on clean exit, rolls back on exception.
+  The session is passed to run_simulation_from_request() which passes it to
+  the persistence layer.  Routes never touch the session directly.
+
 Future endpoints to add here (from docs/project_architecture.md Section 10):
-  POST /simulate/step      — Run one day, return state (EnKF stepping interface)
-  POST /simulate/whatif    — Branch a simulation from current state with new inputs
-  GET  /simulate/{run_id}  — Retrieve results of a past simulation run (Phase 2 DB)
+  POST /simulate/step         — Run one day, return state (EnKF stepping interface)
+  POST /simulate/whatif       — Branch a simulation from current state
+  GET  /simulate/{run_id}     — Retrieve stored results of a past run (Phase 2 DB)
+  GET  /simulate/{run_id}/daily — Retrieve daily time series for a past run
 """
 
 import logging
 import traceback
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from backend.app.core.exceptions import SimulationError, InvalidCropError
 from backend.app.api.schemas.simulate import SimulateRequest, SimulateResponse
 from backend.app.services.simulation_service import run_simulation_from_request
 from backend.app.simulation.crop_provider import list_available_crops
+from backend.app.db.session import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -62,20 +71,32 @@ router = APIRouter()
         "Weather is fetched from NASA POWER API and soil from SoilGrids unless "
         "you set `use_real_weather=false` or `use_real_soil=false` (useful for "
         "fast testing without internet).\n\n"
+        "The response includes a `simulation_id` (UUID) when the run is "
+        "successfully persisted to the database. Use this ID with future "
+        "GET endpoints to retrieve stored results without re-running the simulation.\n\n"
         "Use `GET /simulate/crops` to see available crop/variety combinations."
     ),
     response_description=(
         "Simulation results including daily LAI/SM/TAGP/TWSO time series, "
-        "phenological summary, and agronomic metrics."
+        "phenological summary, agronomic metrics, and a simulation_id for "
+        "retrieving stored results."
     ),
     tags=["Simulation"],
 )
-def run_simulate(request: SimulateRequest) -> SimulateResponse:
+def run_simulate(
+    request: SimulateRequest,
+    db: Session = Depends(get_db),
+) -> SimulateResponse:
     """Run a WOFOST 7.2 water-limited crop simulation.
 
     This is a synchronous endpoint (not async) because WOFOST is CPU-bound.
     FastAPI automatically dispatches sync endpoints to a threadpool, so this
     endpoint does not block other concurrent requests.
+
+    The `db` session is injected by FastAPI's dependency system.  After the
+    simulation completes, the service layer persists the SimulationRun and all
+    DailyOutput rows within the same transaction.  get_db() commits on clean
+    exit or rolls back on exception.
 
     Error responses:
         400 — Invalid crop or variety name (not found in PCSE database)
@@ -84,7 +105,10 @@ def run_simulate(request: SimulateRequest) -> SimulateResponse:
         502 — NASA POWER or SoilGrids API unreachable (only when use_real_*=true)
     """
     try:
-        result = run_simulation_from_request(request)
+        # Pass the injected session to the service layer.
+        # If the DB write fails, run_simulation_from_request() logs the error
+        # and returns the response with simulation_id=None (non-fatal).
+        result = run_simulation_from_request(request, db=db)
         return result
 
     except (KeyError, InvalidCropError) as e:

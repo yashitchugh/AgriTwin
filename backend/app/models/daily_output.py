@@ -45,7 +45,7 @@ import datetime
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Date, Float, ForeignKey, Index
+from sqlalchemy import BigInteger, Date, Float, ForeignKey, Index, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -76,11 +76,14 @@ class DailyOutput(Base):
 
     # ── Primary key — integer, not UUID (see module docstring) ────────────
     id: Mapped[int] = mapped_column(
-        BigInteger,
+        # Integer maps to SQLite INTEGER ROWID — the only type SQLite supports
+        # for autoincrement PKs.  On PostgreSQL, Alembic emits BIGSERIAL
+        # automatically for Mapped[int] with autoincrement=True.
+        Integer,
         primary_key=True,
         autoincrement=True,
         doc=(
-            "Auto-increment BIGINT primary key. "
+            "Auto-increment integer primary key. "
             "Not exposed in the public API — DailyOutput rows are always "
             "accessed via their parent SimulationRun."
         ),
