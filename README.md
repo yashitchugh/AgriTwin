@@ -110,6 +110,37 @@ compute_harvest_metrics() → AgronomicMetrics{yield, HI, peak_lai, ...}
 SimulateResponse → JSON
 ```
 
+### Logical Architecture & LLM Context
+
+This structural flow acts as the primary mental model and context sequence for understanding the AgriTwin architecture, especially for LLMs participating in further development:
+
+```text
+Farm (Physical grouping, Phase 2)
+  ↓
+Field (Geospatial entity, holds boundary GeoJSON)
+  ↓
+Observation Sources (Data ingestion layer)
+(WeatherSource, SoilSource, SatelliteSource, SensorSource)
+  ↓
+WOFOST/PCSE (Crop Simulation Layer)
+(Process-based deterministic engine)
+  ↓
+FieldState (Digital Twin State)
+(Live representation of the field's current variables)
+  ↓
+SimulationRun (Historical Memory)
+(Database persistence of the entire simulation campaign)
+  ↓
+Scenario Engine (What-If Analysis)
+    ScenarioDefinition (Blueprint: parameter to vary, baseline, candidates)
+            ↓
+       ScenarioRuns (Executions of candidate values)
+            ↓
+    ScenarioComparison (Ranked results, delta metrics, best/lowest finders)
+  ↓
+REST APIs (FastAPI routes exposing the modules)
+```
+
 ---
 
 ## Current Status (v0.1 — June 2026)
@@ -133,6 +164,8 @@ SimulateResponse → JSON
 | Pydantic v2 schemas | ✅ Working | Full validation with user-friendly errors |
 | Unit test suite | ✅ Running | `pytest tests/` |
 | Swagger/ReDoc docs | ✅ Auto-generated | `localhost:8000/docs` |
+| **Observation Sources Interface** | ✅ Working | Interfaces for Weather, Soil, Satellite, and Sensor sources |
+| **Scenario Engine** | ✅ Working | Sowing Date, Irrigation, and Variety deterministic sweeps with comparison endpoints |
 
 ### 🔬 Scientifically Validated
 
