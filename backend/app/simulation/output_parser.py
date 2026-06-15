@@ -62,9 +62,10 @@ logger = logging.getLogger(__name__)
 #     Irrigation during the grain-filling phase (DVS 1.0–2.0) is most
 #     effective at improving TWSO. This is the primary optimization target.
 TRACKED_VARIABLES: dict[str, str] = {
-    "DVS":   "dvs",     # Development stage (0=emergence, 1=anthesis, 2=maturity)
-    "LAI":   "lai",     # Leaf Area Index [m²/m²] — declines under sustained stress
-    "SM":    "sm",      # Volumetric soil moisture [cm³/cm³] — rises after irrigation
+    # ── In OUTPUT_VARS (always present in batch mode) ────────────────────
+    "DVS":   "dvs",     # Development stage [-]
+    "LAI":   "lai",     # Leaf Area Index [m²/m²]
+    "SM":    "sm",      # Volumetric soil moisture [cm³/cm³]
     "TAGP":  "tagp",    # Total above-ground production [kg/ha dry matter]
     "TWSO":  "twso",    # Total weight of storage organs (yield) [kg/ha]
     "TWLV":  "twlv",    # Total weight of leaves [kg/ha]
@@ -72,10 +73,26 @@ TRACKED_VARIABLES: dict[str, str] = {
     "TWRT":  "twrt",    # Total weight of roots [kg/ha]
     "TRA":   "tra",     # Actual crop transpiration [cm/day]
     "RD":    "rd",      # Rooting depth [cm]
-    # RFTRA: Transpiration reduction factor [0–1].
-    # Primary irrigation stress diagnostic: RFTRA < 1.0 = crop under water stress.
-    # Irrigation should raise RFTRA toward 1.0 within 1–3 days of application.
-    "RFTRA": "rftra",
+    "RFTRA": "rftra",   # Transpiration reduction factor [0–1]
+
+    # ── Live-state variables (NOT in OUTPUT_VARS) ────────────────────────
+    # Available via get_variable() in step-by-step mode ONLY.
+    # These will be None in current batch-mode (run_till_terminate) runs.
+    # Columns are stored nullable so existing records are fully compatible.
+    # When step_by_step=True is enabled for EnKF in Phase 3, these will be
+    # populated via extract_daily_state() on every wofost.run(days=1) call.
+    #
+    # WLV / WST / WRT / WSO: instantaneous organ weights [kg/ha] at the
+    # current timestep BEFORE senescence is applied. Distinct from TWLV/TWST
+    # /TWRT/TWSO which are cumulative total weights.
+    "WLV":   "wlv",     # Actual leaf weight [kg/ha] (pre-senescence daily value)
+    "WST":   "wst",     # Actual stem weight [kg/ha]
+    "WRT":   "wrt",     # Actual root weight [kg/ha]
+    "WSO":   "wso",     # Actual storage organ weight [kg/ha]
+    #
+    # EVS: soil evaporation [cm/day].
+    # Available as a live-state variable but not always in OUTPUT_VARS.
+    "EVS":   "evs",     # Actual soil evaporation [cm/day]
 }
 
 

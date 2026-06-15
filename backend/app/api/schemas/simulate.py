@@ -454,8 +454,53 @@ class DailyState(BaseModel):
             "Important for soil water extraction dynamics."
         ),
     )
+    evs: Optional[float] = Field(
+        default=None,
+        description=(
+            "Actual Soil Evaporation [cm/day]. "
+            "Decreases as LAI increases and canopy shades the soil. "
+            "Non-None in step-by-step mode only."
+        ),
+    )
 
-    # ── EnKF extension hooks (Phase 3 — not yet implemented) ─────────────
+    # ── Cumulative biomass pools (batch mode) ─────────────────────────────
+    twlv: Optional[float] = Field(
+        default=None,
+        description="Total Weight of Leaves [kg dry matter / ha]. Cumulative.",
+    )
+    twst: Optional[float] = Field(
+        default=None,
+        description="Total Weight of Stems [kg dry matter / ha]. Cumulative.",
+    )
+    twrt: Optional[float] = Field(
+        default=None,
+        description="Total Weight of Roots [kg dry matter / ha]. Cumulative.",
+    )
+
+    # ── Live-state organ weights (step-by-step / EnKF mode only) ─────────
+    # These are None in current batch-mode (run_till_terminate) runs.
+    # They will be populated when step_by_step=True is used (Phase 3).
+    wlv: Optional[float] = Field(
+        default=None,
+        description=(
+            "Actual leaf weight [kg/ha] at current timestep (pre-senescence). "
+            "None in batch mode."
+        ),
+    )
+    wst: Optional[float] = Field(
+        default=None,
+        description="Actual stem weight [kg/ha] at current timestep. None in batch mode.",
+    )
+    wrt: Optional[float] = Field(
+        default=None,
+        description="Actual root weight [kg/ha] at current timestep. None in batch mode.",
+    )
+    wso: Optional[float] = Field(
+        default=None,
+        description="Actual storage organ weight [kg/ha] at current timestep. None in batch mode.",
+    )
+
+    # ── Digital Twin / EnKF extension hooks ──────────────────────────────
     # TODO (EnKF Phase 3): Add these fields when assimilation is implemented:
     #   assimilated: bool = Field(default=False, ...)
     #   observation_lai: Optional[float] = Field(default=None, ...)

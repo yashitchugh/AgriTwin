@@ -13,17 +13,28 @@ Why store lat/lon on both Field and SimulationRun?
     simulation (which may differ slightly if the user overrides them or if a
     centroid calculation is applied).  Storing both allows data-quality audits.
 
+boundary_geojson:
+    Optional GeoJSON polygon (RFC 7946) describing the field boundary.
+    Stored as a JSON blob — no geometry library or PostGIS required.
+    Purpose: enables future Sentinel-2 spatial averaging within the polygon,
+    PostGIS spatial queries, and GIS export.
+    No GIS calculations are performed here or by the simulation engine.
+    Format: {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [...]}}
+    or the bare Polygon geometry object (both are accepted, stored as-is).
+
 PostgreSQL note:
     For spatial queries (distance, bounding box), the `latitude`/`longitude`
     pair can be replaced by a PostGIS `GEOGRAPHY(POINT, 4326)` column.
     The schema is kept simple (Float pair) for SQLite compatibility.
-    A PostGIS column can be added via Alembic migration when PostgreSQL is used.
+    A PostGIS GEOMETRY column can be derived from boundary_geojson via
+    ST_GeomFromGeoJSON() in a future migration.
 """
 
 import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Float, ForeignKey, Index, String, Text
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -122,6 +133,30 @@ class Field(TimestampMixin, Base):
             "Field elevation above mean sea level [m]. "
             "Used by WOFOST for Penman-Monteith reference ET calculation. "
             "If None, the simulation service falls back to 10 m (a neutral default)."
+        ),
+    )
+
+    # ── Digital Twin / GIS extension ──────────────────────────────────────
+    boundary_geojson: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        doc=(
+            "Optional GeoJSON polygon (RFC 7946) describing the field boundary. "
+            "Stored as a JSON blob — no GIS library required for persistence. "
+            "\n"
+            "Accepted formats:\n"
+            "  - Bare Polygon geometry: "
+            "    {\"type\": \"Polygon\", \"coordinates\": [[[lon, lat], ...]]}\n"
+            "  - GeoJSON Feature: "
+            "    {\"type\": \"Feature\", \"geometry\": {...}}\n"
+            "\n"
+            "Purpose:\n"
+            "  - Future Sentinel-2 spatial averaging within the polygon.\n"
+            "  - PostGIS spatial queries (ST_GeomFromGeoJSON).\n"
+            "  - GIS export and field boundary visualisation.\n"
+            "  - Passed as boundary_geojson= to SatelliteSource.get_observations().\n"
+            "\n"
+            "None = centroid point (lat/lon) used for all data fetching."
         ),
     )
 

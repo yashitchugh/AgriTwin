@@ -410,8 +410,8 @@ def _persist_results(
         daily_rows = [
             DailyOutput(
                 simulation_run_id=run_id,
-                # Date is stored as ISO string in result.daily_output; convert to date.
                 date=dt.date.fromisoformat(record["date"]),
+                # ── Batch-mode vars (always populated) ───────────────────────
                 dvs=record.get("dvs"),
                 lai=record.get("lai"),
                 sm=record.get("sm"),
@@ -424,6 +424,14 @@ def _persist_results(
                 tra=record.get("tra"),
                 evs=record.get("evs"),
                 rd=record.get("rd"),
+                # ── Live-state vars (None in batch mode; ready for EnKF) ─────
+                # WLV/WST/WRT/WSO are not in WOFOST OUTPUT_VARS — they are
+                # only available via get_variable() in step-by-step mode.
+                # These will be None for all current batch-mode runs.
+                wlv=record.get("wlv"),
+                wst=record.get("wst"),
+                wrt=record.get("wrt"),
+                wso=record.get("wso"),
             )
             for record in result.daily_output
         ]

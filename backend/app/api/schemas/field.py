@@ -28,6 +28,23 @@ class FieldCreate(BaseModel):
     area_ha: Optional[float] = Field(default=None, ge=0.0, examples=[4.5])
     elevation_m: Optional[float] = Field(default=None, examples=[100.0])
     description: Optional[str] = Field(default=None, max_length=2000)
+    boundary_geojson: Optional[dict] = Field(
+        default=None,
+        description=(
+            "Optional GeoJSON polygon (RFC 7946) describing the field boundary. "
+            "Accepted as a bare Polygon geometry or a GeoJSON Feature. "
+            "Stored as-is — no geometry validation is performed server-side. "
+            "Used in future Sentinel-2 spatial averaging and GIS queries."
+        ),
+        examples=[
+            {
+                "type": "Polygon",
+                "coordinates": [
+                    [[80.89, 26.79], [80.91, 26.79], [80.91, 26.81], [80.89, 26.81], [80.89, 26.79]]
+                ]
+            }
+        ],
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -53,6 +70,10 @@ class FieldResponse(BaseModel):
     area_ha: Optional[float] = None
     elevation_m: Optional[float] = None
     description: Optional[str] = None
+    boundary_geojson: Optional[dict] = Field(
+        default=None,
+        description="GeoJSON polygon boundary (bare Polygon or Feature). None if not set.",
+    )
     created_at: Optional[datetime.datetime] = None
     updated_at: Optional[datetime.datetime] = None
     simulation_count: int = Field(default=0)
@@ -70,6 +91,7 @@ class FieldResponse(BaseModel):
             area_ha=field.area_ha,
             elevation_m=field.elevation_m,
             description=field.description,
+            boundary_geojson=field.boundary_geojson,
             created_at=field.created_at,
             updated_at=field.updated_at,
             simulation_count=simulation_count,

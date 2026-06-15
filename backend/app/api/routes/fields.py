@@ -127,6 +127,7 @@ def create_field(
         area_ha=payload.area_ha,
         elevation_m=payload.elevation_m,
         description=payload.description,
+        boundary_geojson=payload.boundary_geojson,
     )
     repo = FieldRepository(db)
     saved = repo.create_field(field)

@@ -8,25 +8,18 @@ It is the highest-volume table in the database:
     Rows per run ≈ max_duration + 14 (pre-sowing buffer) ≈ 379 rows / season
 
 For a farm with 100 fields × 3 seasons × 379 days = ~114 000 rows.
-At ~150 bytes per row (uncompressed), that's ~17 MB — well within SQLite's
+At ~200 bytes per row (uncompressed), that's ~22 MB — well within SQLite's
 practical limits.  PostgreSQL can handle tens of millions of rows trivially.
 
 Integer primary key:
-    DailyOutput intentionally uses a BIGINT auto-increment PK (not UUID)
+    DailyOutput intentionally uses an auto-increment integer PK (not UUID)
     because:
-      - Rows are never referenced externally (they are only queried via
-        their parent SimulationRun).
-      - Sequential integer PKs are faster to insert in bulk (no UUID
-        generation overhead).
-      - The table can hold billions of rows without PK collision (BIGINT max
-        ≈ 9.2 × 10¹⁸).
+      - Rows are never referenced externally (only queried via parent run).
+      - Sequential integer PKs are faster to insert in bulk.
+      - The table can hold billions of rows without PK collision.
 
-Partition hint (PostgreSQL, future):
-    For large deployments, partition this table by simulation_run_id
-    (PARTITION BY HASH) or by date (PARTITION BY RANGE on `date`).
-    Partitioning dramatically reduces query time for time-series reads.
-
-Variable descriptions (from WOFOST 7.2 documentation):
+Variable descriptions — WOFOST 7.2 documentation:
+  Always populated in batch mode (in OUTPUT_VARS):
     DVS    Development Stage [-]: 0=emergence, 1=anthesis, 2=maturity
     LAI    Leaf Area Index [m²/m²]: canopy green leaf area per ground area
     SM     Volumetric soil moisture [cm³/cm³]: in root zone
@@ -38,7 +31,20 @@ Variable descriptions (from WOFOST 7.2 documentation):
     TWLV   Total Weight Leaves [kg/ha]
     TWST   Total Weight Stems [kg/ha]
     TWRT   Total Weight Roots [kg/ha]
+
+  Live-state variables (NULL in batch mode; populated in step-by-step/EnKF mode):
+    WLV    Actual leaf weight [kg/ha] at current timestep (pre-senescence)
+    WST    Actual stem weight [kg/ha]
+    WRT    Actual root weight [kg/ha]
+    WSO    Actual storage organ weight [kg/ha]
     EVS    Actual Soil Evaporation [cm/day]
+
+Digital Twin readiness:
+    The full set of stored variables (both batch + live-state groups) forms the
+    complete state vector required by the FieldState abstraction in
+    backend/app/twin/field_state.py.  Future EnKF modules consume FieldState
+    objects, not raw DailyOutput rows, decoupling the assimilation layer from
+    the database schema.
 """
 
 import datetime
@@ -179,6 +185,55 @@ class DailyOutput(Base):
             "Not included in TAGP (above-ground), but stored for water uptake diagnostics."
         ),
     )
+
+    # ── Live-state organ weights (NULL in batch mode) ──────────────────────
+    # These are daily instantaneous weights BEFORE senescence is applied.
+    # Available only in step-by-step simulation mode via get_variable().
+    # In current batch mode (run_till_terminate) all four are NULL.
+    # Future EnKF modules will use these as the assimilation state vector.
+
+    wlv: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        doc=(
+            "Actual leaf weight [kg dry matter / ha] at current timestep, "
+            "BEFORE daily senescence is subtracted. "
+            "Distinct from TWLV (cumulative total): WLV represents today's "
+            "living leaf mass; TWLV is the running total including senesced material. "
+            "NULL in batch mode; populated in step-by-step (EnKF) mode only."
+        ),
+    )
+
+    wst: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        doc=(
+            "Actual stem weight [kg dry matter / ha] at current timestep. "
+            "Pre-senescence daily value. "
+            "NULL in batch mode; populated in step-by-step (EnKF) mode only."
+        ),
+    )
+
+    wrt: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        doc=(
+            "Actual root weight [kg dry matter / ha] at current timestep. "
+            "Pre-senescence daily value. "
+            "NULL in batch mode; populated in step-by-step (EnKF) mode only."
+        ),
+    )
+
+    wso: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        doc=(
+            "Actual storage organ weight [kg / ha] at current timestep. "
+            "Pre-senescence daily value. Related to TWSO (cumulative). "
+            "NULL in batch mode; populated in step-by-step (EnKF) mode only."
+        ),
+    )
+
 
     # ── Water balance ─────────────────────────────────────────────────────
     sm: Mapped[float | None] = mapped_column(

@@ -24,21 +24,35 @@ from pydantic import BaseModel, Field
 
 
 class DailyStateRecord(BaseModel):
-    """One day of WOFOST output read from the daily_outputs table."""
+    """One day of WOFOST output read from the daily_outputs table.
+
+    Fields marked '(live-state only)' are None in batch-mode simulations.
+    They will be populated when step-by-step (EnKF) mode is enabled.
+    """
 
     date: datetime.date
+    # ── Development ─────────────────────────────────────────────────────
     dvs: Optional[float] = None
+    rd: Optional[float] = None
+    # ── Canopy ──────────────────────────────────────────────────────────
     lai: Optional[float] = None
+    # ── Soil water ──────────────────────────────────────────────────────
     sm: Optional[float] = None
+    # ── Biomass (cumulative totals) ──────────────────────────────────────
     tagp: Optional[float] = None
     twso: Optional[float] = None
     twlv: Optional[float] = None
     twst: Optional[float] = None
     twrt: Optional[float] = None
+    # ── Biomass (live-state instantaneous, EnKF state vector) ────────────
+    wlv: Optional[float] = None   # live-state only
+    wst: Optional[float] = None   # live-state only
+    wrt: Optional[float] = None   # live-state only
+    wso: Optional[float] = None   # live-state only
+    # ── Stress ──────────────────────────────────────────────────────────
     rftra: Optional[float] = None
     tra: Optional[float] = None
     evs: Optional[float] = None
-    rd: Optional[float] = None
 
     model_config = {"from_attributes": True}
 
@@ -47,6 +61,7 @@ class DailyStateRecord(BaseModel):
         return cls(
             date=row.date,
             dvs=row.dvs,
+            rd=row.rd,
             lai=row.lai,
             sm=row.sm,
             tagp=row.tagp,
@@ -54,10 +69,13 @@ class DailyStateRecord(BaseModel):
             twlv=row.twlv,
             twst=row.twst,
             twrt=row.twrt,
+            wlv=row.wlv,
+            wst=row.wst,
+            wrt=row.wrt,
+            wso=row.wso,
             rftra=row.rftra,
             tra=row.tra,
             evs=row.evs,
-            rd=row.rd,
         )
 
 
