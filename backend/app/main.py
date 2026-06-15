@@ -58,6 +58,7 @@ from backend.app.core.config import settings
 from backend.app.api.routes import simulate
 from backend.app.api.routes.simulations import router as simulations_router
 from backend.app.api.routes.fields import router as fields_router
+from backend.app.scenario.api.scenario_routes import router as scenario_router
 from backend.app.db.session import create_tables
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -161,6 +162,11 @@ app.include_router(
     fields_router,
     prefix="/fields",
     tags=["Fields"],
+)
+app.include_router(
+    scenario_router,
+    prefix="/scenarios",
+    tags=["Scenarios"],
 )
 
 
