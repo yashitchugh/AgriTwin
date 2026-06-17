@@ -59,6 +59,7 @@ from backend.app.api.routes import simulate
 from backend.app.api.routes.simulations import router as simulations_router
 from backend.app.api.routes.fields import router as fields_router
 from backend.app.scenario.api.scenario_routes import router as scenario_router
+from backend.app.assimilation.api.observation_routes import router as observations_router
 from backend.app.db.session import create_tables
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -102,6 +103,15 @@ app = FastAPI(
             "description": (
                 "CRUD for Field records — GPS-located agricultural plots. "
                 "Fields group simulation runs by physical location."
+            ),
+        },
+        {
+            "name": "Observations",
+            "description": (
+                "Ingest and query field observations from any source: "
+                "Sentinel-2 satellite, soil moisture sensors, weather stations, "
+                "manual field scouts, and model-derived pseudo-observations. "
+                "Observation records are the data foundation for future EnKF assimilation."
             ),
         },
         {
@@ -167,6 +177,11 @@ app.include_router(
     scenario_router,
     prefix="/scenarios",
     tags=["Scenarios"],
+)
+app.include_router(
+    observations_router,
+    prefix="/observations",
+    tags=["Observations"],
 )
 
 
