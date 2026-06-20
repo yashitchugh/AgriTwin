@@ -10,6 +10,7 @@ registered in Base.metadata before any create_all() or Alembic autogenerate call
 
 from backend.app.assimilation.models.observation import Observation, ObservationSource, ObservationStatus  # noqa: F401
 from backend.app.assimilation.models.observation_batch import ObservationBatch, BatchProcessingStatus  # noqa: F401
+from backend.app.assimilation.models.assimilation_state import AssimilationState  # noqa: F401
 
 __all__ = [
     "Observation",
@@ -17,4 +18,5 @@ __all__ = [
     "ObservationStatus",
     "ObservationBatch",
     "BatchProcessingStatus",
+    "AssimilationState",
 ]

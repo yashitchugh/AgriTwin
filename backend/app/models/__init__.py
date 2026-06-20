@@ -30,6 +30,7 @@ from backend.app.scenario.models.scenario_comparison import ScenarioComparison  
 # Import last so foreign keys to fields/simulation_runs resolve correctly.
 from backend.app.assimilation.models.observation import Observation, ObservationSource, ObservationStatus  # noqa: F401
 from backend.app.assimilation.models.observation_batch import ObservationBatch, BatchProcessingStatus  # noqa: F401
+from backend.app.assimilation.models.assimilation_state import AssimilationState  # noqa: F401
 
 __all__ = [
     # Core
@@ -38,5 +39,5 @@ __all__ = [
     "ScenarioDefinition", "ScenarioRun", "ScenarioComparison",
     # Observation Framework
     "Observation", "ObservationSource", "ObservationStatus",
-    "ObservationBatch", "BatchProcessingStatus",
+    "ObservationBatch", "BatchProcessingStatus", "AssimilationState",
 ]
