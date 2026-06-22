@@ -60,6 +60,7 @@ from backend.app.api.routes.simulations import router as simulations_router
 from backend.app.api.routes.fields import router as fields_router
 from backend.app.scenario.api.scenario_routes import router as scenario_router
 from backend.app.assimilation.api.observation_routes import router as observations_router
+from backend.app.satellite.api.routes import router as satellite_router
 from backend.app.db.session import create_tables
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -182,6 +183,11 @@ app.include_router(
     observations_router,
     prefix="/observations",
     tags=["Observations"],
+)
+app.include_router(
+    satellite_router,
+    prefix="/satellite",
+    tags=["Satellite"],
 )
 
 
