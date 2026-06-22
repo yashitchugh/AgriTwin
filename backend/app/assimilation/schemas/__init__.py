@@ -20,6 +20,12 @@ from backend.app.assimilation.schemas.assimilation_api import (  # noqa: F401
     AssimilationRunStartResponse,
     AssimilationStatusResponse,
 )
+from backend.app.assimilation.schemas.assimilation_visualization import (  # noqa: F401
+    CycleHistoryItem,
+    TimeSeriesPoint,
+    TimeSeriesResponse,
+    YieldEvolutionPoint,
+)
 
 __all__ = [
     "ObservationCreate",
@@ -34,4 +40,8 @@ __all__ = [
     "AssimilationRunRequest",
     "AssimilationRunStartResponse",
     "AssimilationStatusResponse",
+    "CycleHistoryItem",
+    "TimeSeriesPoint",
+    "TimeSeriesResponse",
+    "YieldEvolutionPoint",
 ]

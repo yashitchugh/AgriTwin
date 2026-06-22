@@ -8,7 +8,7 @@ FastAPI router for the /assimilation namespace.
 import datetime
 import logging
 import uuid
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -26,6 +26,12 @@ from backend.app.assimilation.schemas.assimilation_api import (
     AssimilationRunRequest,
     AssimilationRunStartResponse,
     AssimilationStatusResponse,
+)
+from backend.app.assimilation.services.assimilation_visualization_service import AssimilationVisualizationService
+from backend.app.assimilation.schemas.assimilation_visualization import (
+    CycleHistoryItem,
+    TimeSeriesResponse,
+    YieldEvolutionPoint,
 )
 
 logger = logging.getLogger(__name__)
@@ -200,3 +206,92 @@ def get_assimilation_status(
         latest_cycle_date=latest_cycle_date,
         observations_assimilated=latest_run.observations_used,
     )
+
+
+@router.get(
+    "/{simulation_id}/history",
+    response_model=List[CycleHistoryItem],
+    summary="Get EnKF assimilation history",
+    description="Returns step-by-step audit history of EnKF updates for the latest assimilation run of the given simulation ID.",
+    tags=["Assimilation"],
+)
+def get_assimilation_history(
+    simulation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> List[CycleHistoryItem]:
+    sim_run = db.query(SimulationRun).filter(SimulationRun.id == simulation_id).first()
+    if not sim_run:
+        raise HTTPException(
+            status_code=404,
+            detail=f"SimulationRun with ID {simulation_id} not found."
+        )
+    latest_run = (
+        db.query(AssimilationRun)
+        .filter(AssimilationRun.simulation_id == simulation_id)
+        .order_by(AssimilationRun.started_at.desc())
+        .first()
+    )
+    if not latest_run:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No assimilation runs found for simulation ID {simulation_id}."
+        )
+
+    service = AssimilationVisualizationService(db)
+    return service.get_history(simulation_id)
+
+
+@router.get(
+    "/{simulation_id}/timeseries",
+    response_model=TimeSeriesResponse,
+    summary="Get comparative timeseries data",
+    description="Returns comparative timeseries curves (open-loop, assimilated with updates propagated, and observations) for crop parameters.",
+    tags=["Assimilation"],
+)
+def get_assimilation_timeseries(
+    simulation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> TimeSeriesResponse:
+    sim_run = db.query(SimulationRun).filter(SimulationRun.id == simulation_id).first()
+    if not sim_run:
+        raise HTTPException(
+            status_code=404,
+            detail=f"SimulationRun with ID {simulation_id} not found."
+        )
+
+    service = AssimilationVisualizationService(db)
+    return service.get_timeseries(simulation_id)
+
+
+@router.get(
+    "/{simulation_id}/yield-evolution",
+    response_model=List[YieldEvolutionPoint],
+    summary="Get yield prediction evolution",
+    description="Returns predicted crop yield evolution across each assimilation cycle.",
+    tags=["Assimilation"],
+)
+def get_yield_evolution(
+    simulation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> List[YieldEvolutionPoint]:
+    sim_run = db.query(SimulationRun).filter(SimulationRun.id == simulation_id).first()
+    if not sim_run:
+        raise HTTPException(
+            status_code=404,
+            detail=f"SimulationRun with ID {simulation_id} not found."
+        )
+    latest_run = (
+        db.query(AssimilationRun)
+        .filter(AssimilationRun.simulation_id == simulation_id)
+        .order_by(AssimilationRun.started_at.desc())
+        .first()
+    )
+    if not latest_run:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No assimilation runs found for simulation ID {simulation_id}."
+        )
+
+    service = AssimilationVisualizationService(db)
+    return service.get_yield_evolution(simulation_id)
+
