@@ -19,6 +19,7 @@ from backend.app.db.base import Base, TimestampMixin
 if TYPE_CHECKING:
     from backend.app.models.field import Field
     from backend.app.models.simulation_run import SimulationRun
+    from backend.app.models.assimilation_run import AssimilationRun
 
 
 class AssimilationState(TimestampMixin, Base):
@@ -32,6 +33,7 @@ class AssimilationState(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_assimilation_field_time", "field_id", "assimilation_time"),
         Index("ix_assimilation_run_time", "simulation_run_id", "assimilation_time"),
+        Index("ix_assimilation_assim_run_time", "assimilation_run_id", "assimilation_time"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -50,6 +52,13 @@ class AssimilationState(TimestampMixin, Base):
     simulation_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("simulation_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    assimilation_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assimilation_runs.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -73,6 +82,11 @@ class AssimilationState(TimestampMixin, Base):
     # Relationships
     field: Mapped[Optional["Field"]] = relationship("Field", foreign_keys=[field_id])
     simulation_run: Mapped[Optional["SimulationRun"]] = relationship("SimulationRun", foreign_keys=[simulation_run_id])
+    assimilation_run: Mapped[Optional["AssimilationRun"]] = relationship(
+        "AssimilationRun",
+        foreign_keys=[assimilation_run_id],
+        back_populates="assimilation_states",
+    )
 
     def __repr__(self) -> str:
         return (

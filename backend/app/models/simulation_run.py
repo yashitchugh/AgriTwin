@@ -50,6 +50,7 @@ from backend.app.db.base import Base, TimestampMixin
 if TYPE_CHECKING:
     from backend.app.models.field import Field
     from backend.app.models.daily_output import DailyOutput
+    from backend.app.models.assimilation_run import AssimilationRun
 
 
 class SimulationRun(TimestampMixin, Base):
@@ -412,6 +413,14 @@ class SimulationRun(TimestampMixin, Base):
             "One DailyOutput row per simulated day.  "
             "A 365-day simulation produces ~379 rows (including 14-day buffer)."
         ),
+    )
+
+    assimilation_runs: Mapped[list["AssimilationRun"]] = relationship(
+        "AssimilationRun",
+        back_populates="simulation_run",
+        cascade="all, delete-orphan",
+        lazy="select",
+        doc="Assimilation runs execution parent objects associated with this simulation run.",
     )
 
     def __repr__(self) -> str:

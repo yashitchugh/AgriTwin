@@ -21,6 +21,7 @@ from backend.app.models.farm import Farm  # noqa: F401
 from backend.app.models.field import Field  # noqa: F401
 from backend.app.models.simulation_run import SimulationRun  # noqa: F401
 from backend.app.models.daily_output import DailyOutput  # noqa: F401
+from backend.app.models.assimilation_run import AssimilationRun  # noqa: F401
 
 from backend.app.scenario.models.scenario_definition import ScenarioDefinition  # noqa: F401
 from backend.app.scenario.models.scenario_run import ScenarioRun  # noqa: F401
@@ -34,7 +35,7 @@ from backend.app.assimilation.models.assimilation_state import AssimilationState
 
 __all__ = [
     # Core
-    "Farm", "Field", "SimulationRun", "DailyOutput",
+    "Farm", "Field", "SimulationRun", "DailyOutput", "AssimilationRun",
     # Scenario Engine
     "ScenarioDefinition", "ScenarioRun", "ScenarioComparison",
     # Observation Framework
