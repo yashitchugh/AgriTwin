@@ -58,6 +58,7 @@ from backend.app.core.config import settings
 from backend.app.api.routes import simulate
 from backend.app.api.routes.simulations import router as simulations_router
 from backend.app.api.routes.fields import router as fields_router
+from backend.app.api.routes.raw_data import router as raw_data_router
 from backend.app.scenario.api.scenario_routes import router as scenario_router
 from backend.app.assimilation.api.observation_routes import router as observations_router
 from backend.app.assimilation.api.assimilation_routes import router as assimilation_router
@@ -174,6 +175,11 @@ app.include_router(
     fields_router,
     prefix="/fields",
     tags=["Fields"],
+)
+app.include_router(
+    raw_data_router,
+    prefix="/raw-data",
+    tags=["Raw Data Collection"],
 )
 app.include_router(
     scenario_router,

@@ -51,7 +51,7 @@ load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 # to discover which tables exist in the ORM and which exist in the DB.
 from backend.app.db.base import Base          # noqa: F401 — DeclarativeBase
 from backend.app.models import (              # noqa: F401 — register all tables
-    Farm, Field, SimulationRun, DailyOutput,
+    Farm, Field, SimulationRun, DailyOutput,raw_weather_records
 )
 
 # ── Alembic Config object ─────────────────────────────────────────────────────
