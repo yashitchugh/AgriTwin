@@ -96,11 +96,12 @@ def _make_manager(n: int = 5, terminated: bool = False) -> MagicMock:
 
 def _make_X_f(n: int = 5, lai_mean: float = 2.0) -> np.ndarray:
     """Build a fake forecast ensemble matrix shape (STATE_DIM, n)."""
+    rng = np.random.default_rng(42)
     X_f = np.full((STATE_DIM, n), np.nan)
     lai_idx = STATE_INDEX["lai"]
     sm_idx  = STATE_INDEX["sm"]
-    X_f[lai_idx, :] = np.random.normal(lai_mean, 0.2, n)
-    X_f[sm_idx,  :] = np.random.normal(0.28, 0.02, n)
+    X_f[lai_idx, :] = rng.normal(lai_mean, 0.2, n)
+    X_f[sm_idx,  :] = rng.normal(0.28, 0.02, n)
     return X_f
 
 
@@ -583,3 +584,125 @@ def test_injection_results_per_member(mock_enkf, mock_forecast):
     call_args = service._updater.inject_ensemble.call_args
     members_arg, states_arg = call_args[0]
     assert len(states_arg) == N
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AS-26, AS-27, AS-28 — AssimilationRun Integration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@patch("backend.app.assimilation.services.assimilation_service.forecast_until")
+@patch("backend.app.assimilation.services.assimilation_service.enkf_update")
+def test_run_season_creates_assimilation_run(mock_enkf, mock_forecast):
+    """AS-26: run_season creates an AssimilationRun when simulation_run_id is provided."""
+    N = 3
+    X_f = _make_X_f(n=N)
+    X_a = X_f.copy()
+    d = np.full(STATE_DIM, np.nan)
+    d[STATE_INDEX["lai"]] = 0.1
+
+    mock_forecast.return_value = (X_f, np.nanmean(X_f, axis=1))
+    mock_enkf.return_value = (X_a, d, np.zeros((STATE_DIM, STATE_DIM)))
+
+    date1 = datetime.date(2024, 4, 1)
+    obs = [_make_obs("LAI", value=2.0, ts=datetime.datetime.combine(date1, datetime.time(6), tzinfo=UTC))]
+
+    service, obs_repo, state_repo = _make_service(obs_list=obs)
+    obs_repo.get_observations_between.return_value = obs
+    obs_repo.get_by_date.return_value = obs
+
+    sim_run_id = uuid.uuid4()
+    manager = _make_manager(n=N)
+    service._updater = MagicMock()
+    service._updater.inject_ensemble.return_value = [MagicMock() for _ in range(N)]
+
+    result = service.run_season(
+        manager,
+        harvest_date=datetime.date(2024, 4, 15),
+        field_id=FIELD_ID,
+        simulation_run_id=sim_run_id,
+    )
+
+    # Verify that the session add/commit/refresh was called for the AssimilationRun
+    session_mock = state_repo.session
+    assert session_mock.add.call_count == 1
+    added_run = session_mock.add.call_args[0][0]
+    
+    from backend.app.models.assimilation_run import AssimilationRun
+    assert isinstance(added_run, AssimilationRun)
+    assert added_run.simulation_id == sim_run_id
+    assert added_run.ensemble_size == N
+    assert added_run.status == "COMPLETED"
+    assert added_run.total_cycles == 1
+    assert added_run.executed_cycles == 1
+    assert added_run.skipped_cycles == 0
+    assert added_run.observations_used == 1
+
+
+@patch("backend.app.assimilation.services.assimilation_service.forecast_until")
+def test_run_season_fails_marks_run_failed(mock_forecast):
+    """AS-27: If an error is raised during run_season, the AssimilationRun status is updated to FAILED."""
+    mock_forecast.side_effect = RuntimeError("Forecast simulation crashed")
+
+    date1 = datetime.date(2024, 4, 1)
+    obs = [_make_obs("LAI", value=2.0, ts=datetime.datetime.combine(date1, datetime.time(6), tzinfo=UTC))]
+
+    service, obs_repo, state_repo = _make_service(obs_list=obs)
+    obs_repo.get_observations_between.return_value = obs
+
+    sim_run_id = uuid.uuid4()
+    manager = _make_manager(n=3)
+
+    with pytest.raises(RuntimeError, match="Forecast simulation crashed"):
+        service.run_season(
+            manager,
+            harvest_date=datetime.date(2024, 4, 15),
+            field_id=FIELD_ID,
+            simulation_run_id=sim_run_id,
+        )
+
+    # Verify run status is FAILED
+    session_mock = state_repo.session
+    assert session_mock.add.call_count == 1
+    added_run = session_mock.add.call_args[0][0]
+    assert added_run.status == "FAILED"
+
+
+@patch("backend.app.assimilation.services.assimilation_service.forecast_until")
+@patch("backend.app.assimilation.services.assimilation_service.enkf_update")
+def test_run_season_passes_assimilation_run_id_to_persist(mock_enkf, mock_forecast):
+    """AS-28: Save state is called with the auto-generated or explicitly provided assimilation_run_id."""
+    N = 3
+    X_f = _make_X_f(n=N)
+    X_a = X_f.copy()
+    d = np.full(STATE_DIM, np.nan)
+    d[STATE_INDEX["lai"]] = 0.1
+
+    mock_forecast.return_value = (X_f, np.nanmean(X_f, axis=1))
+    mock_enkf.return_value = (X_a, d, np.zeros((STATE_DIM, STATE_DIM)))
+
+    date1 = datetime.date(2024, 4, 1)
+    obs = [_make_obs("LAI", value=2.0, ts=datetime.datetime.combine(date1, datetime.time(6), tzinfo=UTC))]
+
+    service, obs_repo, state_repo = _make_service(obs_list=obs)
+    obs_repo.get_observations_between.return_value = obs
+    obs_repo.get_by_date.return_value = obs
+
+    sim_run_id = uuid.uuid4()
+    assim_run_id = uuid.uuid4()
+    manager = _make_manager(n=N)
+    service._updater = MagicMock()
+    service._updater.inject_ensemble.return_value = [MagicMock() for _ in range(N)]
+
+    # Explicit run ID case
+    service.run_season(
+        manager,
+        harvest_date=datetime.date(2024, 4, 15),
+        field_id=FIELD_ID,
+        simulation_run_id=sim_run_id,
+        assimilation_run_id=assim_run_id,
+    )
+
+    # Verify save_state was called with the correct assimilation_run_id
+    assert state_repo.save_state.call_count == 1
+    saved_state = state_repo.save_state.call_args[0][0]
+    assert saved_state.assimilation_run_id == assim_run_id

@@ -44,6 +44,7 @@ from backend.app.assimilation.repositories.assimilation_state_repository import 
 from backend.app.assimilation.repositories.observation_repository import ObservationRepository
 from backend.app.assimilation.state.state_vector import STATE_VARIABLES, STATE_INDEX, STATE_DIM, StateVector
 from backend.app.assimilation.updater.state_updater import StateUpdater, InjectionResult
+from backend.app.models.assimilation_run import AssimilationRun
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,7 @@ class AssimilationService:
         *,
         field_id:          Optional[uuid.UUID] = None,
         simulation_run_id: Optional[uuid.UUID] = None,
+        assimilation_run_id: Optional[uuid.UUID] = None,
     ) -> SeasonAssimilationResult:
         """Run the complete forecast-assimilate loop for a full crop season.
 
@@ -190,6 +192,7 @@ class AssimilationService:
             harvest_date:      Stop criterion — loop ends when all members reach this date.
             field_id:          Optional field UUID for DB queries and persistence.
             simulation_run_id: Optional SimulationRun UUID for linking AssimilationState records.
+            assimilation_run_id: Optional AssimilationRun UUID. If not provided but simulation_run_id is, a new run will be created.
 
         Returns:
             SeasonAssimilationResult with per-cycle diagnostics.
@@ -206,24 +209,66 @@ class AssimilationService:
             field_id, sow_date, harvest_date, len(obs_dates),
         )
 
-        for obs_date in obs_dates:
-            if obs_date >= harvest_date:
-                break
-            # Check if all members have already terminated
-            if all(m.wofost.flag_terminate for m in manager.members):
-                logger.info("All ensemble members terminated before harvest. Stopping.")
-                break
+        db_session = self.state_repo.session
+        auto_run = None
+        if simulation_run_id is not None and assimilation_run_id is None:
+            try:
+                auto_run = AssimilationRun(
+                    simulation_id=simulation_run_id,
+                    ensemble_size=len(manager.members),
+                    status="RUNNING",
+                    total_cycles=len(obs_dates),
+                    executed_cycles=0,
+                    skipped_cycles=0,
+                    observations_used=0,
+                )
+                db_session.add(auto_run)
+                db_session.commit()
+                db_session.refresh(auto_run)
+                assimilation_run_id = auto_run.id
+            except Exception as e:
+                logger.error("Failed to automatically create AssimilationRun record: %s", e)
+                db_session.rollback()
 
-            result = self._run_cycle(
-                manager=manager,
-                obs_date=obs_date,
-                field_id=field_id,
-                simulation_run_id=simulation_run_id,
-            )
-            cycle_results.append(result)
+        try:
+            for obs_date in obs_dates:
+                if obs_date >= harvest_date:
+                    break
+                # Check if all members have already terminated
+                if all(m.wofost.flag_terminate for m in manager.members):
+                    logger.info("All ensemble members terminated before harvest. Stopping.")
+                    break
 
-        executed = sum(1 for c in cycle_results if not c.skipped)
-        skipped  = sum(1 for c in cycle_results if c.skipped)
+                result = self._run_cycle(
+                    manager=manager,
+                    obs_date=obs_date,
+                    field_id=field_id,
+                    simulation_run_id=simulation_run_id,
+                    assimilation_run_id=assimilation_run_id,
+                )
+                cycle_results.append(result)
+
+            executed = sum(1 for c in cycle_results if not c.skipped)
+            skipped  = sum(1 for c in cycle_results if c.skipped)
+
+            if auto_run is not None:
+                auto_run.status = "COMPLETED"
+                auto_run.completed_at = datetime.datetime.now(datetime.timezone.utc)
+                auto_run.executed_cycles = executed
+                auto_run.skipped_cycles = skipped
+                auto_run.observations_used = sum(c.obs_assimilated for c in cycle_results)
+                db_session.commit()
+                db_session.refresh(auto_run)
+
+        except Exception as e:
+            if auto_run is not None:
+                try:
+                    auto_run.status = "FAILED"
+                    auto_run.completed_at = datetime.datetime.now(datetime.timezone.utc)
+                    db_session.commit()
+                except Exception as db_err:
+                    logger.error("Failed to update auto_run to FAILED status: %s", db_err)
+            raise e
 
         return SeasonAssimilationResult(
             field_id=field_id,
@@ -243,6 +288,7 @@ class AssimilationService:
         *,
         field_id:          Optional[uuid.UUID] = None,
         simulation_run_id: Optional[uuid.UUID] = None,
+        assimilation_run_id: Optional[uuid.UUID] = None,
     ) -> AssimilationCycleResult:
         """Run one forecast → assimilate → inject cycle for a given observation date.
 
@@ -253,6 +299,7 @@ class AssimilationService:
             obs_date=obs_date,
             field_id=field_id,
             simulation_run_id=simulation_run_id,
+            assimilation_run_id=assimilation_run_id,
         )
 
     # ── Internal loop ─────────────────────────────────────────────────────
@@ -263,6 +310,7 @@ class AssimilationService:
         obs_date: datetime.date,
         field_id: Optional[uuid.UUID],
         simulation_run_id: Optional[uuid.UUID],
+        assimilation_run_id: Optional[uuid.UUID] = None,
     ) -> AssimilationCycleResult:
         """Execute one EnKF cycle: forecast → observe → update → inject → persist."""
 
@@ -332,6 +380,7 @@ class AssimilationService:
             obs_date=obs_date,
             field_id=field_id,
             simulation_run_id=simulation_run_id,
+            assimilation_run_id=assimilation_run_id,
         )
 
         # ── 7. Inject corrected states ────────────────────────────────────
@@ -508,6 +557,7 @@ class AssimilationService:
         obs_date: datetime.date,
         field_id: Optional[uuid.UUID],
         simulation_run_id: Optional[uuid.UUID],
+        assimilation_run_id: Optional[uuid.UUID] = None,
     ) -> Optional[uuid.UUID]:
         """Persist an AssimilationState record. Returns the new record's UUID, or None on error."""
         try:
@@ -525,6 +575,7 @@ class AssimilationService:
             record = AssimilationState(
                 field_id=field_id,
                 simulation_run_id=simulation_run_id,
+                assimilation_run_id=assimilation_run_id,
                 assimilation_time=assimilation_time,
                 ensemble_mean=self._vec_to_dict(x_mean_f),
                 ensemble_covariance={"matrix": cov_f, "variables": list(STATE_VARIABLES)},

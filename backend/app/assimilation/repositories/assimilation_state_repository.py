@@ -47,3 +47,14 @@ class AssimilationStateRepository:
         )
         result = self.session.execute(stmt)
         return list(result.scalars().all())
+
+    def get_by_assimilation_run(self, assimilation_run_id: uuid.UUID) -> List[AssimilationState]:
+        """Get all assimilation states linked to a specific assimilation run, ordered by time."""
+        stmt = (
+            select(AssimilationState)
+            .where(AssimilationState.assimilation_run_id == assimilation_run_id)
+            .order_by(AssimilationState.assimilation_time.asc())
+        )
+        result = self.session.execute(stmt)
+        return list(result.scalars().all())
+

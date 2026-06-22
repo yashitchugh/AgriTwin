@@ -10,6 +10,16 @@ from backend.app.assimilation.schemas.observation import (  # noqa: F401
     ObservationBatchResponse,
     ObservationBatchListResponse,
 )
+from backend.app.assimilation.schemas.assimilation import (  # noqa: F401
+    AssimilationStateResponse,
+    AssimilationRunCreate,
+    AssimilationRunResponse,
+)
+from backend.app.assimilation.schemas.assimilation_api import (  # noqa: F401
+    AssimilationRunRequest,
+    AssimilationRunStartResponse,
+    AssimilationStatusResponse,
+)
 
 __all__ = [
     "ObservationCreate",
@@ -18,4 +28,10 @@ __all__ = [
     "ObservationBatchCreate",
     "ObservationBatchResponse",
     "ObservationBatchListResponse",
+    "AssimilationStateResponse",
+    "AssimilationRunCreate",
+    "AssimilationRunResponse",
+    "AssimilationRunRequest",
+    "AssimilationRunStartResponse",
+    "AssimilationStatusResponse",
 ]
