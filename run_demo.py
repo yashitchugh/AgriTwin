@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-run_demo_for_professor.py
-=========================
+run_demo.py
+===========
 
 Automated execution script for demonstrating the closed-loop Ensemble Kalman Filter (EnKF)
 data assimilation workflow for Rice (IR64) with irrigation.
@@ -16,7 +16,7 @@ BASE_URL = "http://127.0.0.1:8000"
 
 def main():
     print("=" * 80)
-    print(" AGRITWIN ENKF CLOSED-LOOP ASSIMILATION DEMONSTRATION FOR PROFESSOR")
+    print(" AGRITWIN ENKF CLOSED-LOOP ASSIMILATION DEMONSTRATION")
     print("=" * 80)
 
     # Step 1: Create Farm & Field

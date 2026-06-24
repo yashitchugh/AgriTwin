@@ -12,58 +12,79 @@ AgriTwin is a Python/FastAPI Agricultural Digital Twin platform. It uses the Wag
 *   **Weather/Soil providers**: Fully implemented with local file caching (`.agritwin_cache/`) for NASA POWER (weather) and SoilGrids (soil properties).
 *   **Scenario Sweep Engine**: Operates deterministically to compare sowing dates, crop varieties, and irrigation events.
 *   **Sequential EnKF Assimilation**: Completed. Successfully perturbs crop/soil parameters, builds ensembles, carries out mathematical updates on observations, registers cycle metrics, and injects updated variables back into the running PCSE model instances.
-*   **Read-only APIs & Demos**: Implemented endpoints for status, step-by-step history, and daily comparative timeseries. The `run_demo_for_professor.py` automated script successfully runs this entire workflow.
+*   **Read-only APIs & Demos**: Implemented endpoints for status, step-by-step history, and daily comparative timeseries. The `run_demo.py` automated script successfully runs this entire workflow.
 *   **Verification**: All **290 unit and integration tests** pass successfully.
 
 ---
 
-## 🗄️ 2. Database Schema & Relationships
+## 📂 2. Detailed Module & File Architecture
 
-The relational DB uses SQLAlchemy 2.0 (under SQLite for development, designed to migrate to PostgreSQL easily). The main entities are:
+### A. Core Database & Persistence (`backend/app/models/`, `repositories/`, `db/`)
+*   **`models/farm.py`**: Model for physical farm entities. Farms hold metadata and serve as parent groupings for fields.
+*   **`models/field.py`**: Holds field boundaries (GeoJSON polygons), elevations (m), centroids (latitude, longitude), and areas (ha). Deleting a field cascade-deletes all associated observations, simulations, and EnKF runs.
+*   **`models/simulation_run.py`**: Historical record of simulation campaigns. Stores configuration inputs, phenological summaries, and scalar metrics.
+*   **`models/daily_output.py`**: Houses daily high-frequency simulation timeseries outputs. Holds variables: DVS, LAI, TAGP, TWSO, SM, RFTRA, etc.
+*   **`models/assimilation_run.py`**: Represents the execution parent of an EnKF loop. Tracks status (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`), and diagnostic parameters (`ensemble_size`, `total_cycles`, `executed_cycles`, `skipped_cycles`, `observations_used`).
+*   **`assimilation/models/assimilation_state.py`**: Holds structural JSON matrices of prior, posterior, and observation state vectors per assimilation cycle. Logs innovations and observation quality scores.
+*   **`repositories/`**: Houses SQL query services (`field_repository.py`, `simulation_repository.py`, `daily_output_repository.py`, `assimilation_run_repository.py`, `assimilation_state_repository.py`). Handles CRUD operations, database flushes, and cascade purging.
 
-```mermaid
-erDiagram
-    Farms ||--o{ Fields : "has"
-    Fields ||--o{ Observations : "receives"
-    Fields ||--o{ SimulationRuns : "has"
-    SimulationRuns ||--o{ DailyOutputs : "generates"
-    SimulationRuns ||--o{ AssimilationRuns : "has"
-    AssimilationRuns ||--o{ AssimilationStates : "records"
-```
+### B. Spatial Ingestion & Adapters (`backend/app/data_sources/`, `services/`)
+*   **`data_sources/nasa_power_source.py`**: Interacts with the NASA POWER weather database to fetch daily solar radiation, temperature, rainfall, wind, and humidity. Implements a filesystem JSON cache at `.agritwin_cache/`.
+*   **`data_sources/soilgrids_source.py`**: Queries the ISRIC SoilGrids REST API to download sand, clay, and silt fractions at specific field centroids.
+*   **`services/soil_service.py`**: Resolves SoilGrids raw data to parameterize WOFOST hydraulic parameters: saturation capacity (`SM0`), field capacity (`SMFCF`), wilting point (`SMW`), and hydraulic conductivity (`K0`) using pedotransfer equations.
+*   **`services/weather_service.py`**: Parses weather packets, validates coordinate ranges, and computes crop campaign statistics.
+*   **`data_sources/sensor_source.py`**: Handles incoming soil moisture and temperature telemetry from physical IoT sensors.
+*   **`data_sources/satellite_source.py`**: Handles Sentinel-2 and MODIS imagery metadata.
 
-### Table Details
-1.  **`farms`**: Grouping entity (ID, name, description).
-2.  **`fields`**: Geospatial boundaries, lat/lon centroid, area (ha), elevation (m), and boundary GeoJSON.
-3.  **`observations`**: External measurements (LAI, SM, etc.) containing:
-    *   `source`: `satellite`, `sensor`, or `manual`.
-    *   `variable`: e.g. `LAI`, `SM`.
-    *   `value`: float value.
-    *   `uncertainty`: std deviation (used for observation noise covariance $R$).
-    *   `status`: `VALID` or `INVALID` (outliers).
-4.  **`simulation_runs`**: Persists one crop simulation run. Stores:
-    *   `run_type`: `baseline`, `irrigated`, `enkf`, etc.
-    *   Agronomic metrics (`yield_kg_ha`, `peak_lai`, `harvest_index`, `final_tagp`, `final_twso`, `total_days`).
-    *   Phenological dates (`dos`, `doe`, `doa`, `dom`, `doh`).
-    *   JSON payloads (`request_payload`, `metrics_payload`, `summary_payload`, `weather_snapshot`, `soil_snapshot`).
-5.  **`daily_outputs`**: High-frequency output data (one row per simulation day) containing daily state variables: DVS, LAI, SM, TAGP, TWSO, etc.
-6.  **`assimilation_runs`**: Orchestrates EnKF runs. Stores:
-    *   `simulation_id` (FK to `simulation_runs.id`).
-    *   Status (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`).
-    *   Diagnostics (`ensemble_size`, `total_cycles`, `executed_cycles`, `skipped_cycles`, `observations_used`).
-7.  **`assimilation_states`**: Logs individual EnKF update cycles:
-    *   `assimilation_run_id` (FK to `assimilation_runs.id`).
-    *   `cycle_date`: date of update.
-    *   Prior, posterior, and observation vector matrices stored as JSON blobs.
-    *   Diagnostics: innovation, quality score, cycle number.
+### C. Satellite Estimation Pipeline (`backend/app/satellite/`)
+*   **`satellite/providers/sentinel2_provider.py`**: Synthesizes or queries Sentinel-2 band imagery for coordinates. Masks clouds using reflectance index bounds.
+*   **`satellite/processors/vegetation_indices.py`**: Calculates Normalized Difference Vegetation Index (NDVI) and Enhanced Vegetation Index (EVI) arrays.
+*   **`satellite/processors/lai_estimator.py`**: Uses semi-empirical scaling models to translate NDVI/EVI curves to green Leaf Area Index (LAI).
+*   **`satellite/services/lai_observation_service.py`**: Runs the Sentinel provider, processes bands, estimates LAI, filters out invalid scenes, and registers them in the database as observations.
+*   **`satellite/api/routes.py`**: Exposes the ingestion REST endpoint `GET /satellite/lai`.
 
-**Cascade Deletions**:
-*   Deleting a `Field` purges all related `Observations` and `SimulationRuns`.
-*   Deleting a `SimulationRun` purges all related `DailyOutputs` and `AssimilationRuns`.
-*   Deleting an `AssimilationRun` purges all related `AssimilationStates`.
+### D. WOFOST PCSE Simulation Engine (`backend/app/simulation/`)
+*   **`simulation/engine.py`**: Compiles parameter providers and executes the physical WOFOST engine.
+*   **`simulation/agromanagement.py`**: Parses agromanagement calendar dictionaries. Corrects the rice transplanting exception (setting `crop_start_type="emergence"` if the transplanting development stage `DVSI` is greater than 0).
+*   **`simulation/crop_provider.py` & `soil_provider.py`**: Reads standard crop parameter files (retrieved from `external_repos/WOFOST_crop_parameters`) and generates custom soil parameters.
+*   **`simulation/output_parser.py`**: Converts raw arrays of PCSE dictionary outputs into agronomic summaries and phenological stages.
+
+### E. Scenario Optimization Sweeper (`backend/app/scenario/`)
+*   **`scenario/generators/sowing_date_generator.py`**: Generates a set of sowing dates around a baseline (e.g., in weekly shifts) to find the optimal planting window.
+*   **`scenario/generators/variety_generator.py`**: Generates sweeps across available crop varieties.
+*   **`scenario/generators/irrigation_generator.py`**: Generates deficit, timed, or critical-stage irrigation options.
+*   **`scenario/services/comparison_engine.py`**: Evaluates simulation outputs from all candidate strategies. Ranks them based on yield (`TWSO`) and Water Use Efficiency (WUE - kg of yield produced per mm of water applied).
+*   **`scenario/api/`**: Exposes scenario sweep endpoints (`POST /scenarios/sowing-date`, `POST /scenarios/irrigation`, etc.).
+
+### F. Ensemble Kalman Filter Data Assimilation (`backend/app/assimilation/`)
+*   **`assimilation/ensemble/ensemble_manager.py`**: Manages $N$ parallel WOFOST runs. Adds stochastic Gaussian noise to crop parameters (`SLATB`, `SPAN`, `TSUM1`, `TSUM2`) and soil moisture bounds (`SMFCF`, `SMW`). Uses `PerturbedWeatherProvider` to add daily noise to temperature, rainfall, and solar radiation.
+*   **`assimilation/state/state_vector.py`**: Defines the EnKF state vector layout. Houses physical variables: `LAI`, `SM` (soil moisture), `WLV` (leaves), `WST` (stems), `WRT` (roots), and `WSO` (storage organs). Converts dict variables to matrices and back.
+*   **`assimilation/filters/enkf.py`**: The EnKF mathematical core. Calculates the forecast ensemble covariance ($P^f$), the Kalman Gain ($K$), and updates the state variables of all ensemble members using the observation vector and observation noise covariance ($R$).
+*   **`assimilation/updater/state_updater.py`**: Corrects internal physical variables of active WOFOST engines (such as green leaf age class partitions and water balance routing) to match the EnKF updated state vector, preventing model crashes.
+*   **`assimilation/services/assimilation_service.py`**: Runs the sequential forecast-assimilation loop over a crop season. Performs Quality Control (QC) filters (Z-score outlier detection, minimum quality index thresholds, and source isolation) and persists `AssimilationState` logs.
+*   **`assimilation/services/assimilation_visualization_service.py`**: Compiles visual comparison assets:
+    *   *History*: Detailed audit trails of state changes (prior vs posterior) and innovation values.
+    *   *Timeseries*: Combines open-loop daily values, observations, and assimilated curves, using a Zero-Order Hold (ZOH) offset projection to predict the corrected development curve.
+    *   *Yield Evolution*: Compiles predicted yield (`TWSO`) convergence across successive assimilation steps.
+*   **`assimilation/api/assimilation_routes.py`**: Exposes the EnKF API endpoint routes (`POST /assimilation/run`, status checks, history, timeseries, and yield evolution).
 
 ---
 
-## ⚠️ 3. Crucial Architecture Invariants & Rules
+## 🗄️ 3. Database Schema Layout
+
+```mermaid
+erDiagram
+    farms ||--o{ fields : "has"
+    fields ||--o{ observations : "receives"
+    fields ||--o{ simulation_runs : "has"
+    simulation_runs ||--o{ daily_outputs : "generates"
+    simulation_runs ||--o{ assimilation_runs : "has"
+    assimilation_runs ||--o{ assimilation_states : "records"
+```
+
+---
+
+## ⚠️ 4. Crucial Architecture Invariants & Rules
 
 When writing code or modifying this repository, **you must respect the following invariants**:
 
@@ -87,32 +108,6 @@ To keep ensemble members physically plausible and prevent PCSE engine crashes:
 
 ### E. Zero-Order Hold Offset Propagation
 Because EnKF corrections are applied at discrete observation dates, the comparative daily timeseries API does not re-simulate. Instead, it computes the correction offset (posterior - prior) at the assimilation date and propagates it forward using a **Zero-Order Hold (ZOH)** offset until the next cycle or the season end. This creates a smooth comparative curve between open-loop and assimilated variables.
-
----
-
-## 🛠️ 4. Code Execution & Class Flow
-
-When `POST /assimilation/run` is called:
-1.  **API Route Handler** (`assimilation_routes.py`):
-    *   Fetches the baseline `SimulationRun` and target `Field`.
-    *   Creates an `AssimilationRun` record with status `RUNNING`.
-    *   Constructs the `EnsembleManager`.
-2.  **Ensemble Initialization** (`ensemble_manager.py`):
-    *   Creates $N$ `EnsembleMember` instances.
-    *   Creates a `PerturbedWeatherProvider` for each member (adding random noise to radiation, temperature, and rainfall).
-    *   Perturbs crop parameters (`SLATB`, `SPAN`, `TSUM1`, `TSUM2`) and soil parameters (`SMFCF`, `SMW`).
-    *   Instantiates a step-by-step WOFOST model for each member.
-3.  **Assimilation Loop** (`assimilation_service.py`):
-    *   Discovers observation dates.
-    *   For each date:
-        *   Forecasts all members to the observation date (`forecast_until`).
-        *   Retrieves observations and applies Quality Control (QC).
-        *   Constructs state vectors (`StateVector`).
-        *   If valid observations exist, executes `enkf_update` (`enkf.py`), updating the state matrix.
-        *   Injects updated states back into each member's PCSE engine (`StateUpdater`).
-        *   Persists the cycle details as `AssimilationState`.
-4.  **Completion**:
-    *   Status is updated to `COMPLETED` and statistics are saved.
 
 ---
 
