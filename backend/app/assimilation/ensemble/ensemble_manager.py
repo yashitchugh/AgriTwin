@@ -96,14 +96,15 @@ class EnsembleManager:
         self.members: List[EnsembleMember] = []
         
         # Initialize baseline providers
+        campaign_start = sow_date - dt.timedelta(days=14)
         self.base_wdp = create_weather_provider(
             latitude=latitude,
             longitude=longitude,
             elevation=elevation,
-            start_year=sow_date.year,
+            start_year=campaign_start.year,
             end_year=harvest_date.year,
             use_nasa=use_nasa_weather,
-            start_date=sow_date,
+            start_date=campaign_start,
             end_date=harvest_date,
         )
         

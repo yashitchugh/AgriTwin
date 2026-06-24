@@ -109,6 +109,7 @@ def run_simulate(
         # If the DB write fails, run_simulation_from_request() logs the error
         # and returns the response with simulation_id=None (non-fatal).
         result = run_simulation_from_request(request, db=db)
+        db.commit()
         return result
 
     except (KeyError, InvalidCropError) as e:

@@ -131,6 +131,7 @@ def create_field(
     )
     repo = FieldRepository(db)
     saved = repo.create_field(field)
+    db.commit()
     logger.info("POST /fields → id=%s name=%r", saved.id, saved.name)
     return FieldResponse.from_orm_row(saved, simulation_count=0)
 
