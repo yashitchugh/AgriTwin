@@ -62,6 +62,9 @@ from backend.app.scenario.api.scenario_routes import router as scenario_router
 from backend.app.assimilation.api.observation_routes import router as observations_router
 from backend.app.assimilation.api.assimilation_routes import router as assimilation_router
 from backend.app.satellite.api.routes import router as satellite_router
+from backend.app.api.routes.interpolation import router as interpolation_router
+from backend.app.api.routes.error_correction import router as error_correction_router
+from backend.app.api.routes.window_preprocessing import router as window_preprocessing_router
 from backend.app.db.session import create_tables
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -115,6 +118,10 @@ app = FastAPI(
                 "manual field scouts, and model-derived pseudo-observations. "
                 "Observation records are the data foundation for future EnKF assimilation."
             ),
+        },
+        {
+            "name": "Interpolation",
+            "description": "Temporal interpolation endpoints for filling gaps in satellite/sensor observations.",
         },
         {
             "name": "System",
@@ -194,6 +201,21 @@ app.include_router(
     assimilation_router,
     prefix="/assimilation",
     tags=["Assimilation"],
+)
+app.include_router(
+    interpolation_router,
+    prefix="/interpolate",
+    tags=["Interpolation"],
+)
+app.include_router(
+    error_correction_router,
+    prefix="/interpolate",
+    tags=["Interpolation"],
+)
+app.include_router(
+    window_preprocessing_router,
+    prefix="/interpolate",
+    tags=["Interpolation"],
 )
 
 
